@@ -19,7 +19,7 @@
  */
 
 #ifndef lint
-static const volatile char rcsid[] = "@(#)$Id: ircd.c,v 1.153 2004/11/16 16:56:16 chopin Exp $";
+static const volatile char rcsid[] = "@(#)$Id: ircd.c,v 1.157 2005/03/29 22:50:15 chopin Exp $";
 #endif
 
 #include "os.h"
@@ -152,7 +152,7 @@ RETSIGTYPE s_restart(int s)
 	dorestart = 1;
 }
 
-void	server_reboot()
+void	server_reboot(void)
 {
 	Reg	int	i;
 
@@ -492,7 +492,7 @@ static	time_t	check_pings(time_t currenttime)
 	aClient *bysptr = NULL;
 	int	ping = 0, i;
 	time_t	oldest = 0, timeout;
-	char	*reason;
+	char	*reason = NULL;
 
 	for (i = highest_fd; i >= 0; i--)
 	    {
@@ -1273,7 +1273,7 @@ static	void	io_loop(void)
  * set from the command line by -x, use /dev/null as the dummy logfile as long
  * as DEBUGMODE has been defined, else don't waste the fd.
  */
-static	void	open_debugfile()
+static	void	open_debugfile(void)
 {
 #ifdef	DEBUGMODE
 	int	fd;
@@ -1303,7 +1303,7 @@ static	void	open_debugfile()
 	return;
 }
 
-static	void	setup_signals()
+static	void	setup_signals(void)
 {
 #if POSIX_SIGNALS
 	struct	sigaction act;
@@ -1332,8 +1332,12 @@ static	void	setup_signals()
 	(void)sigaction(SIGTERM, &act, NULL);
 # if defined(USE_IAUTH)
 	act.sa_handler = s_slave;
+# else
+	act.sa_handler = SIG_IGN;
+# endif
 	(void)sigaddset(&act.sa_mask, SIGUSR1);
 	(void)sigaction(SIGUSR1, &act, NULL);
+# if defined(USE_IAUTH)
 	act.sa_handler = SIG_IGN;
 #  ifdef SA_NOCLDWAIT
         act.sa_flags = SA_NOCLDWAIT;
@@ -1374,6 +1378,8 @@ static	void	setup_signals()
 # if defined(USE_IAUTH)
 	(void)signal(SIGUSR1, s_slave);
 	(void)signal(SIGCHLD, SIG_IGN);
+# else
+	(void)signal(SIGUSR1, SIG_IGN);
 # endif
 	
 # if defined(__FreeBSD__)
@@ -1410,7 +1416,7 @@ void ircd_writetune(char *filename)
 	    {
 		(void)sprintf(buf, "%d\n%d\n%d\n%d\n%d\n%d\n%d\n", ww_size,
 			       lk_size, _HASHSIZE, _CHANNELHASHSIZE,
-			       _SERVERSIZE, poolsize, _UIDSIZE);
+			       _SIDSIZE, poolsize, _UIDSIZE);
 		if (write(fd, buf, strlen(buf)) == -1)
 			sendto_flag(SCH_ERROR,
 				    "Failed (%d) to write tune file: %s.",
@@ -1463,7 +1469,7 @@ void ircd_readtune(char *filename)
 		_HOSTNAMEHASHSIZE = t_data[2]; /* hostname has always same size
 						  as the client hash */
 		_CHANNELHASHSIZE = t_data[3];
-		_SERVERSIZE = t_data[4];
+		_SIDSIZE = t_data[4];
 		poolsize = t_data[5];
 		_UIDSIZE = t_data[6];
 

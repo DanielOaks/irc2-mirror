@@ -18,7 +18,7 @@
  */
 
 #ifndef lint
-static const volatile char rcsid[] = "@(#)$Id: chkconf.c,v 1.42 2004/12/06 17:07:23 chopin Exp $";
+static const volatile char rcsid[] = "@(#)$Id: chkconf.c,v 1.45 2005/02/22 18:27:30 chopin Exp $";
 #endif
 
 #include "os.h"
@@ -142,7 +142,7 @@ int	main(int argc, char *argv[])
  * configuration file from.  This may either be th4 file direct or one end
  * of a pipe from m4.
  */
-static	int	openconf()
+static	int	openconf(void)
 {
 #ifdef	M4_PREPROC
 	int	pi[2];
@@ -187,7 +187,7 @@ static	int	openconf()
 }
 
 /* show config as ircd would see it before starting to parse it */
-static	void	showconf()
+static	void	showconf(void)
 {
 #if defined(CONFIG_DIRECTIVE_INCLUDE)
 	aConfig *p, *p2;
@@ -255,7 +255,7 @@ static	void	showconf()
 **            NULL if config is invalid (some mandatory fields missing)
 */
 
-static	aConfItem 	*initconf()
+static	aConfItem 	*initconf(void)
 {
 	int	fd;
 	char	*tmp, *tmp3 = NULL, *s;
@@ -526,6 +526,10 @@ static	aConfItem 	*initconf()
 				case 'M':
 				case 'F':
 					break;
+				case ' ':
+				case '\t':
+					/* so there's no weird warnings */
+					break;
 				default:
 					config_error(CF_WARN, CK_FILE, CK_LINE,
 						"unknown I-line flag: %c", *s);
@@ -561,6 +565,10 @@ static	aConfItem 	*initconf()
 				case 'p':
 				case 'P':
 				case 't':
+					break;
+				case ' ':
+				case '\t':
+					/* so there's no weird warnings */
 					break;
 				default:
 					config_error(CF_WARN, CK_FILE, CK_LINE,
@@ -1012,9 +1020,11 @@ static	void	validate(aConfItem *top)
 			nr = aconf->clients;
 			filelist = findConfLineNumber(nr);
 			config_error(CF_WARN, CK_FILE, CK_LINE,
-				"unmatched %c:%s:%s:%s",
-				confchar(aconf->status), aconf->host,
-				SHOWSTR(aconf->passwd), aconf->name);
+				"unmatched %c%c%s%c%s%c%s",
+				confchar(aconf->status), IRCDCONF_DELIMITER,
+				aconf->host, IRCDCONF_DELIMITER,
+				SHOWSTR(aconf->passwd), IRCDCONF_DELIMITER,
+				aconf->name);
 		    }
 	return;
 }
@@ -1092,7 +1102,7 @@ static int simulateM4Include(struct wordcount *filelist, int nr, char *filename,
 #endif
 
 #ifndef CONFIG_DIRECTIVE_INCLUDE
-static void	mywc()
+static void	mywc(void)
 {
 	int	fd, dh, nr = 0;
 	char	line[512];
