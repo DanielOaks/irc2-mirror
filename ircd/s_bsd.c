@@ -44,9 +44,7 @@ char s_bsd_id[] = "s_bsd.c v2.0 (c) 1988 University of Oulu, Computing Center\
 #include <sys/socket.h>
 #include <sys/file.h>
 #include <sys/ioctl.h>
-#ifdef	UNIXPORT
 #include <sys/un.h>
-#endif
 #if defined(__hpux)
 #include "inet.h"
 #endif
@@ -57,14 +55,12 @@ char s_bsd_id[] = "s_bsd.c v2.0 (c) 1988 University of Oulu, Computing Center\
 #include <utmp.h>
 #include <sys/errno.h>
 #include <sys/resource.h>
-#ifdef	BAD_DNS
-# ifdef	AIX
+#ifdef AIX
 #include <arpa/nameser.h>
 #include <resolv.h>
-# else
+#else
 #include "nameser.h"
 #include "resolv.h"
-# endif
 #endif
 #include "sock.h"	/* If FD_ZERO isn't define up to this point,  */
 			/* define it (BSD4.2 needs this) */
@@ -93,7 +89,7 @@ extern	aConfItem *find_conf_name PROTO((char *, int));
 extern	char	*get_client_name PROTO((aClient *, int));
 extern	char	*my_name_for_link PROTO((char *, aConfItem *));
 extern	int	portnum, debugtty, debuglevel;
-extern	long	nextconnect, nextping;
+extern	long	nextconnect;
 
 extern	int errno;
 
@@ -103,7 +99,6 @@ int	highest_fd = 0, readcalls = 0;
 struct	sockaddr *connect_unix_server PROTO((aConfItem *, aClient *, int *));
 struct	sockaddr *connect_inet_server PROTO((aConfItem *, aClient *, int *));
 static	int	completed_connection PROTO((aClient *));
-static	struct	in_addr myip;
 #ifdef	UNIXPORT
 static	char	unixpath[256];
 #endif
@@ -167,10 +162,7 @@ static	int	AcceptNewConnections = TRUE;
 **	cptr	if not NULL, is the *LOCAL* client associated with
 **		the error.
 */
-#ifndef IDENT
-static
-#endif /* not IDENT */;
-int	report_error(text, cptr)
+static	int	report_error(text,cptr)
 char	*text;
 aClient *cptr;
     {
@@ -186,202 +178,99 @@ aClient *cptr;
 	return 0;
     }
 
-int	inetport(cptr, name, port)
-aClient	*cptr;
-char	*name;
-int	port;
+int	open_port(portnum)
+int	portnum;
     {
+	int	sock, length, sock2;
+	int	opt = 1;
 	static	struct sockaddr_in server;
-	int	length, ad[4], opt = 1;
-	char	ipname[20];
 
-	ad[0] = ad[1] = ad[2] = ad[3] = 0;
-
-	/*
-	 * do it this way because building ip# from separate values for each
-	 * byte requires endian knowledge or some nasty messing. Also means
-	 * easy conversion of "*" 0.0.0.0 or 134.* to 134.0.0.0 :-)
-	 */
-	sscanf(name, "%d.%d.%d.%d", &ad[0], &ad[1], &ad[2], &ad[3]);
-	sprintf(ipname, "%d.%d.%d.%d", ad[0], ad[1], ad[2], ad[3]);
-
-	if (cptr != &me)
+	/* At first, open a new socket */
+	sock = socket(AF_INET, SOCK_STREAM, 0);
+	if (sock < 0)
 	    {
-		sprintf(cptr->sockhost, "%-.42s.%.5u",
-			name, (unsigned int)port);
-		strcpy(cptr->name, me.name);
-	    }
-	/*
-	 * At first, open a new socket
-	 */
-	cptr->fd = socket(AF_INET, SOCK_STREAM, 0);
-	if (cptr->fd < 0)
-	    {
-		report_error("opening stream socket %s:%s", cptr);
-		return -1;
+		report_error("opening stream socket %s:%s",(aClient *)NULL);
+		exit(-1);
 	    }
 
 #ifdef SO_REUSEADDR
-	if (setsockopt(cptr->fd, SOL_SOCKET, SO_REUSEADDR,
-			&opt, sizeof(opt)) < 0)
+	if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)
 	    {
-		report_error("setsockopt %s:%s", cptr);
-		close(cptr->fd);
-		return -1;
+		report_error("setsockopt %s:%s", (aClient *) 0);
+		exit(-1);
 	    }
 #endif
 
 	/* Bind a port to listen for new connections */
 	
-	cptr->ip.s_addr = inet_addr(ipname);
 	server.sin_family = AF_INET;
 	server.sin_addr.s_addr = INADDR_ANY;
-	server.sin_port = htons(port);
-
+	server.sin_port = htons(portnum);
 	for (length = 0; length < 10; length++)
 	    {
-		if (bind(cptr->fd, &server, sizeof(server)))
+		if (bind(sock, (struct sockaddr *) &server, sizeof(server)))
 		    {
-			report_error("binding stream socket %s:%s", cptr);
+			report_error("binding stream socket %s:%s",
+				    (aClient *)NULL);
 			if (length >= 9)
-			    {
-				close(cptr->fd);
-				return -1;
-			    }
+				exit(-1);
 			sleep(20);
 		    }
 		else
 			break;
 	    }
-	if (cptr == &me) /* KLUDGE to get it work... */
-	 {
+	{ /* KLUDGE to get it work... */
 	  char buf[1024];
 	  int len = sizeof(server);
-	  if (getsockname(cptr->fd, &server, &len))
+	  if (getsockname(sock, &server, &len))
 	  	exit(1);
 
+	  me.port = server.sin_port;
 	  sprintf(buf, ":%s %d %d :Port to local server is\n",
-		  me.name, RPL_MYPORTIS, server.sin_port);
+		  me.name, RPL_MYPORTIS, me.port);
 	  write(0, buf, strlen(buf));
-	 }
-	if (cptr->fd > highest_fd)
-		highest_fd = cptr->fd;
-	SetMe(cptr);
-	cptr->port = port;
-	cptr->from = cptr;
-	listen(cptr->fd, 3);
-	local[cptr->fd] = cptr;
-	cptr->flags |= FLAGS_LISTEN;
+	}
+	if (sock > highest_fd)
+		highest_fd = sock;
+	local[sock] = &me;
+	listen(sock, 3);
 
-	return 0;
+	return(sock);
     }
 
-int	add_listener(name, port)
-char	*name;
+#ifdef	UNIXPORT
+int	unixport(port, cptr)
 int	port;
-{
-	aClient	*cptr;
-
-#ifdef	UNIXPORT
-	if (*name == '/')
-	    {
-		cptr = make_client(NULL);
-		if (unixport(cptr, name, port))
-			free(cptr);
-	    }
-	else
-#endif
-	    {
-		cptr = make_client(NULL);
-		if (inetport(cptr, name, port))
-			free(cptr);
-	    }
-	cptr->acpt = cptr;
-	return 0;
-}
-
-#ifdef	UNIXPORT
-int	unixport(cptr, path, port)
 aClient	*cptr;
-char	*path;
-int	port;
 {
 	struct sockaddr_un un;
 
-	if ((cptr->fd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1)
-	    {
-		report_error("error opening unix domain socket %s:%s",NULL);
-		return -1;
-	    }
+	cptr->fd = socket(AF_UNIX, SOCK_STREAM, 0);
 
-	mkdir(path, 0755);
 	un.sun_family = AF_UNIX;
-	sprintf(unixpath, "%s/%d", path, port);
+	sprintf(unixpath, "%s/%d", UNIXPORTPATH, port);
 	unlink(unixpath);
-	errno = 0;
 	strcpy(un.sun_path, unixpath);
-	strncpyzt(cptr->sockhost, unixpath, sizeof(cptr->sockhost));
-	strcpy(cptr->name, me.name);
-
 	if (bind(cptr->fd, (struct sockaddr *) &un, strlen(unixpath) + 2))
 	    {
-		report_error("error binding unix socket %s:%s", cptr);
-		close(cptr->fd);
+		perror("bind unix");
 		return -1;
 	    }
 	if (cptr->fd > highest_fd)
 		highest_fd = cptr->fd;
 	listen(cptr->fd, 3);
-	chmod(path, 0755);
-	chmod(unixpath, 0777);
+	chmod(UNIXPORTPATH, 0755);
 	SetMe(cptr);
-	cptr->flags |= FLAGS_UNIX|FLAGS_LISTEN;
+	cptr->flags |= FLAGS_UNIX;
 	cptr->from = cptr;
 	cptr->port = 0;
+	strncpyzt(cptr->sockhost, unixpath, sizeof(cptr->sockhost));
+	strcpy(cptr->name, me.name);
 	local[cptr->fd] = cptr;
 
 	return 0;
 }
 #endif
-
-close_listeners()
-{
-	Reg1	aClient	*cptr;
-	Reg2	int	i;
-
-	/*
-	 * change the "accepted" from pointers to point back to me if they
-	 * were accepted from a strange socket.
-	 */
-	for (i = 0; i <= highest_fd; i++)
-	    {
-		if (!(cptr = local[i]))
-			continue;
-		if (cptr->acpt != &me)
-			cptr->acpt = &me;
-	    }
-
-	/*
-	 * close all 'extra' listening ports we have and unlink the file
-	 * name if it was a unix socket.
-	 */
-	for (i = 0; i <= highest_fd; i++)
-	    {
-		if (!(cptr = local[i]))
-			continue;
-		if (!IsMe(cptr) || cptr == &me ||
-		    !(cptr->flags & FLAGS_LISTEN))
-			continue;
-
-		if (IsUnixSocket(cptr))
-			unlink(cptr->sockhost);
-		close_connection(cptr);
-		/*
-		 * have to restart loop because it gets reordered :-/
-		 */
-		i = 0;
-	    }
-}
 
 int	init_sys(bootopt)
 int	bootopt;
@@ -501,11 +390,11 @@ Reg3	struct	sockaddr_in *socka;
 	int	len = sizeof(struct sockaddr_in);
 
 #ifdef	UNIXPORT
-	if (IsUnixSocket(cptr))
+	if (cptr->flags & FLAGS_UNIX)
 	    {
-		strncpyzt(full, cptr->acpt->sockhost, HOSTLEN+1);
-		strncpyzt(sockn, full, HOSTLEN+1);
-		strncpyzt(cptr->sockhost, full, HOSTLEN+1);
+		strncpyzt(full, unixpath, HOSTLEN+1);
+		strncpyzt(sockn, unixpath, HOSTLEN+1);
+		strncpyzt(cptr->sockhost, unixpath, HOSTLEN+1);
 		bcopy(&cptr->ip, &socka->sin_addr, sizeof(struct in_addr));
 		socka->sin_family = AF_INET;
 
@@ -530,7 +419,7 @@ Reg3	struct	sockaddr_in *socka;
 	else
 		strcpy(full, sockn);
 	bcopy(&socka->sin_addr, &cptr->ip, sizeof(struct in_addr));
-	cptr->port = (int)(ntohs(socka->sin_port));
+	cptr->port = socka->sin_port;
 
 	return 0;
 }
@@ -545,22 +434,18 @@ int	len, fam;
 	struct	hostent	hps;
 	int	stop = 0;
 
-	alarm(10);
 	hp = gethostbyaddr(sp, len, fam);
-	alarm(0);
 	if (!hp)
 		return NULL;
 
-	alarm(10);
 	hp2 = gethostbyname(hp->h_name);
-	alarm(0);
 	if (!hp2)
 		return NULL;
 
 	for (i = 0; !stop && hp->h_addr_list[i]; i++)
 		for (j = 0; !stop && hp2->h_addr_list[j]; j++)
 			if (!bcmp(hp->h_addr_list[i],
-				  hp2->h_addr_list[j], sizeof(long)))
+				  hp2->h_addr_list[j], sizeof(long))
 				stop = 1;
 	if (stop)
 		return hp;
@@ -581,9 +466,8 @@ aClient	*cptr;
 int	flags;
 {
 	Reg1	char	*name;
-	Reg2	Link	*link;
-	aConfItem *aconf;
-	char	sockname[HOSTLEN+1], fullname[HOSTLEN+1];
+	Reg2	aConfItem *aconf;
+	char	sockname[16], fullname[HOSTLEN+1];
 	struct	hostent *hp = NULL;
 	struct	sockaddr_in sk;
 	int	i = 0;
@@ -594,14 +478,9 @@ int	flags;
 	if (check_init(cptr, sockname, fullname, &sk))
 		return -2;
 
-	if (!IsUnixSocket(cptr))
-	    {
-		alarm(10);
+	if (!(cptr->flags & FLAGS_UNIX))
 		hp = gethostbyaddr(&(sk.sin_addr), sizeof(struct in_addr),
 				   sk.sin_family);
-		alarm(0);
-	    }
-
 
 	/* attach I-lines using hostname first, then check ip#'s. */
 	if (hp)
@@ -632,15 +511,7 @@ int	flags;
 			cptr->name, fullname);
 		return -1;
 	    }
-
-	for (link = cptr->confs, aconf = NULL; link; link = link->next)
-	    {
-		aconf = link->value.aconf;
-		if (!aconf->port)
-			break;
-		if (aconf->port == cptr->acpt->port)
-			break;
-	    }
+	aconf = cptr->confs->value.aconf;
 	det_confs_butmask(cptr, 0);
 	attach_conf(cptr, aconf);
 	debug(DEBUG_DNS, "ch_cl: access ok: %s[%s]", cptr->name, fullname);
@@ -665,7 +536,7 @@ int	check_server(cptr)
 aClient	*cptr;
 {
 	Reg1	char	*name;
-	char	sockname[HOSTLEN+1], fullname[HOSTLEN+1];
+	char	sockname[16], fullname[HOSTLEN+1];
 	Reg2	aConfItem *c_conf = NULL, *n_conf = NULL;
 	Reg3	struct hostent *hp = NULL;
 	struct	sockaddr_in sk;
@@ -702,7 +573,7 @@ aClient	*cptr;
 		    }
 	    }
 #ifdef	UNIXPORT
-	if (IsUnixSocket(cptr))
+	if (cptr->flags & FLAGS_UNIX)
 	    {
 		if (!c_conf)
 			c_conf = find_conf(links, name, CFLAG);
@@ -716,40 +587,24 @@ aClient	*cptr;
 	** real name, then check with it as the host. Use gethostbyname()
 	** to check for servername as hostname.
 	*/
-	alarm(10);
-	if ((!c_conf || !n_conf) && (hp = gethostbyname(name)))
+	if ((!c_conf || !n_conf) && gethostbyname(name))
 	    {
-		alarm(0);
-		for (i = 0; hp->h_addr_list[i]; i++)
-			if (!bcmp(hp->h_addr_list[i], (char *)(&sk.sin_addr),
-				  sizeof(struct in_addr)))
-				break;
-		if (hp->h_addr_list[i])
-		    {
-			strncpyzt(cptr->sockhost, name,
-				  sizeof(cptr->sockhost));
-			if (!c_conf)
-				c_conf = find_conf_host(links, name, CFLAG);
-			if (!n_conf)
-				n_conf = find_conf_host(links, name, NFLAG);
-		    }
-		hp = (struct hostent *)NULL;
+		strncpyzt(cptr->sockhost, name, sizeof(cptr->sockhost));
+		if (!c_conf)
+			c_conf = find_conf_host(links, name, CFLAG);
+		if (!n_conf)
+			n_conf = find_conf_host(links, name, NFLAG);
 	    }
-	alarm(0);
 
 	if (!c_conf || !n_conf)
-	    {
-		alarm(10);
 		hp = gethostbyaddr(&(sk.sin_addr), sizeof(struct in_addr),
 				   sk.sin_family);
-		alarm(0);
-	    }
 	if (hp)
 		/*
 		 * if we are missing a C or N line from above, search for
 		 * it under all known hostnames we have for this ip#.
 		 */
-		for (i = 0,name = hp->h_name; name ; name = hp->h_aliases[i++])
+		for (name = hp->h_name; name ; name = hp->h_aliases[i++])
 		    {
 			strncpyzt(fullname, name, sizeof(fullname));
 			add_local_domain(fullname,HOSTLEN-strlen(fullname));
@@ -795,9 +650,9 @@ aClient	*cptr;
 	attach_conf(cptr, n_conf);
 	attach_conf(cptr, c_conf);
 
-	if ((c_conf->ipnum.s_addr == -1) && !IsUnixSocket(cptr))
+	if ((c_conf->ipnum.s_addr == -1) && !(cptr->flags & FLAGS_UNIX))
 		bcopy(&(sk.sin_addr),&(c_conf->ipnum),sizeof(struct in_addr));
-	if (!IsUnixSocket(cptr))
+	if (!(cptr->flags & FLAGS_UNIX))
 		strncpy(cptr->sockhost, c_conf->host, HOSTLEN);
 
 	debug(DEBUG_DNS,"sv_cl: access ok: %s[%s]",
@@ -852,17 +707,20 @@ aClient *cptr;
         Reg1 aConfItem *aconf;
 	Reg2 int i,j;
 
-	if (aconf = find_conf(cptr->confs, cptr->name, CONF_CONNECT_SERVER))
-		aconf->hold = time(NULL) + ConfConFreq(aconf);
-
-	if (cptr->fd >= 0)
-	    {
+        if (IsServer(cptr))
+		{
+                if (aconf = find_conf_name(get_client_name(cptr,FALSE),
+                                     CONF_CONNECT_SERVER))
+               		aconf->hold = MIN(aconf->hold,
+					  time(NULL) + ConfConFreq(aconf));
+                }
+	if (cptr->fd >= 0) {
 		flush_connections(cptr->fd);
 		local[cptr->fd] = (aClient *)NULL;
 		close(cptr->fd);
 		cptr->fd = -1;
 		DBufClear(&cptr->sendQ);
-	    }
+	}
 	for (; highest_fd > 0; highest_fd--)
 		if (local[highest_fd])
 			break;
@@ -926,23 +784,20 @@ aClient *cptr;
  * The client is added to the linked list of clients but isnt added to any
  * hash tables yuet since it doesnt have a name.
  */
-aClient *add_connection(cptr, fd)
-aClient	*cptr;
+aClient *add_connection(fd)
 int	fd;
 {
-	aClient *acptr;
-	acptr = make_client((aClient *)NULL);
+	aClient *cptr;
+	cptr = make_client((aClient *)NULL);
 
 	/* Removed preliminary access check. Full check is performed in
 	 * m_server and m_user instead. Also connection time out help to
 	 * get rid of unwanted connections.
 	 */
 	if (isatty(fd)) /* If descriptor is a tty, special checking... */
-		strncpyzt(acptr->sockhost, cptr->sockhost,
-			  sizeof(acptr->sockhost));
+		strncpyzt(cptr->sockhost, me.sockhost, sizeof(cptr->sockhost));
 	else
 	    {
-		register char *s, *t;
 		struct	sockaddr_in addr;
 		int	len = sizeof(struct sockaddr_in);
 
@@ -955,72 +810,51 @@ int	fd;
 		/* Copy ascii address to 'sockhost' just in case. Then we
 		 * have something valid to put into error messages...
 		 */
-		strncpyzt(acptr->sockhost, (char *)inet_ntoa(addr.sin_addr),
-			  sizeof(acptr->sockhost));
-		bcopy (&addr.sin_addr, &acptr->ip, sizeof(struct in_addr));
-
-		for (s = (char *)&cptr->ip, t = (char *)&acptr->ip, len = 4;
-		     len > 0; len--, s++, t++)
-		    {
-			if (!*s)
-				continue;
-			if (*s != *t)
-				break;
-		    }
-
-		if (len)
-		    {
-			free(acptr);
-			close(fd);
-			return (aClient *)NULL;
-		    }
+		strncpyzt(cptr->sockhost, (char *)inet_ntoa(addr.sin_addr),
+			  sizeof(cptr->sockhost));
+		bcopy (&cptr->ip, &addr.sin_addr, sizeof(struct in_addr));
+		bcopy (&addr.sin_addr, &cptr->ip, sizeof(struct in_addr));
 	    }
 
-	acptr->fd = fd;
+	cptr->fd = fd;
 	if (fd > highest_fd)
 		highest_fd = fd;
-	local[fd] = acptr;
-	acptr->acpt = cptr;
-	add_client_to_list(acptr);
-	set_non_blocking(acptr);
-	return acptr;
+	local[fd] = cptr;
+	add_client_to_list(cptr);
+	set_non_blocking(cptr);
+	return cptr;
 }
 
 #ifdef	UNIXPORT
-aClient *add_unixconnection(cptr, fd)
-aClient	*cptr;
+aClient *add_unixconnection(fd)
 int	fd;
 {
-	aClient *acptr;
+	aClient *cptr;
 	struct	sockaddr_un addr;
 	struct	hostent	*hp;
 	int	len = sizeof(struct sockaddr_un);
 
-	acptr = make_client((aClient *)NULL);
+	cptr = make_client((aClient *)NULL);
 
 	/* Copy ascii address to 'sockhost' just in case. Then we
 	 * have something valid to put into error messages...
 	 */
-	strncpyzt(acptr->sockhost, cptr->sockhost, sizeof(acptr->sockhost));
+	strncpyzt(cptr->sockhost, me.sockhost, sizeof(cptr->sockhost));
 
-	acptr->fd = fd;
+	cptr->fd = fd;
 	if (fd > highest_fd)
 		highest_fd = fd;
-	local[fd] = acptr;
-	acptr->acpt = cptr;
-	SetUnixSock(acptr);
-	alarm(10);
+	local[fd] = cptr;
+	cptr->flags |= FLAGS_UNIX;
 	hp = gethostbyname(me.sockhost);
-	alarm(0);
 	if (hp)
-		bcopy(hp->h_addr_list[0], &acptr->ip, sizeof(struct in_addr));
+		bcopy(hp->h_addr_list[0], &cptr->ip, sizeof(struct in_addr));
 	else
-		acptr->ip.s_addr = inet_addr("127.0.0.1");
+		cptr->ip.s_addr = inet_addr("127.0.0.1");
 
-	add_client_to_list(acptr);
-	set_non_blocking(acptr);
-
-	return acptr;
+	add_client_to_list(cptr);
+	set_non_blocking(cptr);
+	return cptr;
 }
 #endif
 
@@ -1055,27 +889,23 @@ long	delay; /* Don't ever use ZERO here, unless you mean to poll and then
       tval = now + 5; /* +x - # of messages allowed in bursts */
       FD_ZERO(&read_set);
       FD_ZERO(&write_set);
-
+      for (i = 0; i <= highest_fd; i++)
+	if ((cptr = local[i]) && IsMe(cptr) && AcceptNewConnections &&
+	    (now > lastaccept))
+	  FD_SET(i, &read_set);
       for (i = 0; i <= highest_fd; i++)
 	if (cptr = local[i])
 	  {
-	    if (IsMe(cptr) && AcceptNewConnections &&
-		(cptr->flags & FLAGS_LISTEN) && (now > cptr->lasttime + 2))
-	     {
-		FD_SET(i, &read_set);
-	     }
-	    else
-	     {
+	    if (!IsMe(cptr)) {
 	      if (cptr->since > tval) /* find time till we can next read
 					 from this connection. -avalon */
 		delay2 = cptr->since - tval;
 	      else
 		FD_SET(i, &read_set);
-	     }
+	    }
 	    if (DBufLength(&cptr->sendQ) > 0 || IsConnecting(cptr))
 	      FD_SET(i, &write_set);
 	  }
-
       wait.tv_sec = MIN(delay2, delay);
       wait.tv_usec = 0;
       nfds = select(FD_SETSIZE, &read_set, &write_set, (fd_set *) 0, &wait);
@@ -1088,7 +918,7 @@ long	delay; /* Don't ever use ZERO here, unless you mean to poll and then
        ** occurred. Perhaps should actually check the
        ** error code...? ---msa
        */
-      report_error("select %s:%s", cptr);
+      report_error("select %s:%s",(aClient *)NULL);
       res++;
       if (res > 5)
 	restart();
@@ -1099,26 +929,26 @@ long	delay; /* Don't ever use ZERO here, unless you mean to poll and then
      the body. Not happy with this, but... --msa */
   
   for (i = 0; i <= highest_fd; i++)
-   if ((cptr = local[i]) && IsMe(cptr) && FD_ISSET(i, &read_set) &&
-	(cptr->flags & FLAGS_LISTEN))
+   if ((cptr = local[i]) && IsMe(cptr) && FD_ISSET(i, &read_set))
     {
       FD_CLR(i, &read_set);
       nfds--;
-      cptr->lasttime = time(NULL);
+      lastaccept = now;
       if ((fd = accept(i, (struct sockaddr *)0, (int *)0)) < 0)
 	{
 	  /*
-	  ** There may be many reasons for error return, but
-	  ** in otherwise correctly working environment the
-	  ** probable cause is running out of file descriptors
-	  ** (EMFILE, ENFILE or others?). The man pages for
-	  ** accept don't seem to list these as possible,
-	  ** although it's obvious that it may happen here.
-	  ** Thus no specific errors are tested at this
-	  ** point, just assume that connections cannot
-	  ** be accepted until some old is closed first.
-	  */
-	  report_error("Cannot accept new connections %s:%s", cptr);
+	   ** There may be many reasons for error return, but
+	   ** in otherwise correctly working environment the
+	   ** probable cause is running out of file descriptors
+	   ** (EMFILE, ENFILE or others?). The man pages for
+	   ** accept don't seem to list these as possible,
+	   ** although it's obvious that it may happen here.
+	   ** Thus no specific errors are tested at this
+	   ** point, just assume that connections cannot
+	   ** be accepted until some old is closed first.
+	   */
+	  report_error("Cannot accept new connections %s:%s",
+		      (aClient *)NULL);
 	  AcceptNewConnections = FALSE;
 	  break;
 	}
@@ -1130,14 +960,14 @@ long	delay; /* Don't ever use ZERO here, unless you mean to poll and then
       /* Reuse of add_connection (which do never fail)  meLazy
        */
 #ifdef	UNIXPORT
-      if (IsUnixSocket(cptr) && (cptr->flags & FLAGS_LISTEN))
-	add_unixconnection(local[i], fd);
+      if (i == me.fd)
+	add_connection(fd);
       else
-	add_connection(local[i], fd);
+	add_unixconnection(fd);
 #else
-      add_connection(local[i], fd);
+      add_connection(fd);
 #endif
-      nextping = time(NULL);
+
       break; /* Really! This was not a loop, just faked "if" --msa */
     }	/* WARNING IS NORMAL HERE! */
 
@@ -1163,7 +993,7 @@ long	delay; /* Don't ever use ZERO here, unless you mean to poll and then
 	      nfds--;
 	      FD_CLR(i, &read_set);
 	     }
-	    exit_client((aClient *)NULL, cptr, &me, "write error");
+	    exit_client(cptr,cptr,&me,"write error");
 	    continue;
 	   }
 	}
@@ -1173,9 +1003,7 @@ long	delay; /* Don't ever use ZERO here, unless you mean to poll and then
       readcalls++;
       if ((length = read(i, buffer, buflen)) > 0) {
 	*from = cptr;
-	cptr->lasttime = time(NULL);
-	if (cptr->lasttime > cptr->since)
-	  cptr->since = cptr->lasttime;
+	cptr->since = cptr->lasttime = now;
 	cptr->flags &= ~FLAGS_PINGSENT;
 	dopacket(cptr, buffer, length);
 	continue;
@@ -1206,16 +1034,18 @@ long	delay; /* Don't ever use ZERO here, unless you mean to poll and then
        ** a rehash in between, the status has been changed to
        ** CONF_ILLEGAL). But only do this if it was a "good" link.
        */
-      if (aconf = find_conf(cptr->confs, cptr->name, CONF_CONNECT_SERVER))
+      if (cptr->confs)
+	aconf = cptr->confs->value.aconf;
+      if (aconf && aconf->status == CONF_CONNECT_SERVER)
 	{
 	  aconf->hold = now;
 	  aconf->hold +=
-	    (aconf->hold - cptr->firsttime > HANGONGOODLINK) ?
+	    (aconf->hold - cptr->since > HANGONGOODLINK) ?
 	      HANGONRETRYDELAY : ConfConFreq(aconf);
 	  if (nextconnect > aconf->hold)
 	    nextconnect = aconf->hold;
 	}
-      exit_client((aClient *)NULL, cptr, &me, "Bad link?");
+      exit_client(cptr, cptr, &me, "Bad link?");
       continue;
     }
   return -1;
@@ -1292,7 +1122,6 @@ aConfItem *aconf;
 	if (cptr->fd > highest_fd)
 		highest_fd = cptr->fd;
 	local[cptr->fd] = cptr;
-	cptr->acpt = &me;
 	SetConnecting(cptr);
 
 	strncpyzt(cptr->sockhost, aconf->host, sizeof(cptr->sockhost));
@@ -1306,7 +1135,7 @@ aConfItem	*aconf;
 aClient	*cptr;
 int	*lenp;
 {
-	static	struct	sockaddr_in	server, local;
+	static	struct	sockaddr_in	server;
 	struct	hostent	*hp;
 
 	/*
@@ -1316,12 +1145,7 @@ int	*lenp;
 
 	cptr->fd = socket(AF_INET, SOCK_STREAM, 0);
 	strncpyzt(cptr->sockhost, aconf->host, sizeof(cptr->sockhost));
-	bzero((char *)&server, sizeof(server));
-	bzero((char *)&local, sizeof(local));
-	local.sin_family = AF_INET;
 	server.sin_family = AF_INET;
-	bcopy((char *)&myip, (char *)&local.sin_addr,
-        	sizeof(struct in_addr));
 
 	if (cptr->fd < 0)
 	    {
@@ -1329,34 +1153,26 @@ int	*lenp;
 		free(cptr);
 		return (struct sockaddr *)NULL;
 	    }
-	if (bind(cptr->fd, (struct sockaddr *)&local, sizeof(local))==-1)
-	    {
-		report_error("error binding to local port for %s:%s", cptr);
-		close(cptr->fd);
-		free(cptr);
-		return NULL;
-	    }
 	
 	/* MY FIX -- jtrim@duorion.cair.du.edu  (2/10/89) */
 
 	if (isdigit(*(aconf->host)) && (aconf->ipnum.s_addr == -1))  {
 		aconf->ipnum.s_addr = inet_addr(aconf->host);
 	} else if (aconf->ipnum.s_addr == -1) {
-		alarm(10);
 		hp = gethostbyname(aconf->host);
-		alarm(0);
 		if (hp == (struct hostent *)NULL)
 		    {
 			close(cptr->fd);
 			free(cptr);
-			debug(DEBUG_FATAL, "%s: unknown host", aconf->host);
+			debug(DEBUG_FATAL, "%s: unknown host",
+			      aconf->host);
 			return (struct sockaddr *)NULL;
 		    }
 		bcopy(hp->h_addr_list[0], &aconf->ipnum,
 		      sizeof(struct in_addr));
 	   	}
-	bcopy(&aconf->ipnum, &server.sin_addr, sizeof(struct in_addr));
-	server.sin_port = htons((aconf->port > 0) ? aconf->port : portnum);
+	bcopy(&aconf->ipnum,&server.sin_addr,sizeof(struct in_addr));
+	server.sin_port = htons((aconf->port>0)?aconf->port:portnum);
 
 	/* End FIX */
 
@@ -1384,7 +1200,7 @@ int	*lenp;
 	sock.sun_family = AF_UNIX;
 	*lenp = strlen(sock.sun_path) + 2;
 
-	SetUnixSock(cptr);
+	cptr->flags |= FLAGS_UNIX;
 	return (struct sockaddr *)&sock;
 }
 #endif
@@ -1521,8 +1337,7 @@ int	get_my_name(conf_name, name, len)
 char	*conf_name, *name;
 int	len;
 {
-	static	char	tmp[HOSTLEN];
-	struct	hostent	*hp;
+	struct hostent *hp;
 
 	if (gethostname(name,len) < 0)
 		return -1;
@@ -1536,29 +1351,27 @@ int	len;
 	 * a CNAME record for conf_name pointing to hostname. If so accept
 	 * conf_name as our name.   meLazy
 	 */
-	if (BadPtr(conf_name))
-		return -1;
-
-	alarm(10);
-	if ((hp = gethostbyname(conf_name)) || (hp = gethostbyname(name)))
+	if (!BadPtr(conf_name) && mycmp(conf_name, name))
 	    {
-		char	*hname;
-		int	i=0;
+		if (hp = gethostbyname(conf_name))
+		    {
+			char tmp[HOSTLEN];
+			char *hname;
+			int i=0;
 
-		alarm(0);
-		for (hname = hp->h_name; hname; hname = hp->h_aliases[i++])
-  		    {
-			strncpy(tmp, hname, sizeof(tmp));
-			add_local_domain(tmp,sizeof(tmp)-strlen(tmp));
-			if (!mycmp(tmp, conf_name))
-			    {
-				bcopy(hp->h_addr, (char *)&myip,
-				        sizeof(struct in_addr));
-				strncpy(name, conf_name, len);
-				return 0;
-			    }
- 		    }
+			for (hname = hp->h_name; hname;
+			     hname = hp->h_aliases[i++])
+	  		    {
+				strncpy(tmp, hname, sizeof(tmp));
+				add_local_domain(tmp,sizeof(tmp)-strlen(tmp));
+				if (!mycmp(tmp, conf_name))
+				    {
+					strncpy(name, conf_name, len);
+					break;
+				    }
+	 		    }
+		    }
 	    }
-	alarm(0);
-	return -1;
+
+	return (0);
 }

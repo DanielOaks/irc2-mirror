@@ -212,8 +212,6 @@ long	length;
 		    }
 		chunk = DBUFSIZ;
 	    }
-	if (dyn->head == (dbufbuf *)NULL)
-		dyn->length = 0;
 	return 0;
     }
 

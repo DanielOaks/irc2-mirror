@@ -57,7 +57,6 @@ char conf_id[] = "conf.c v2.0 (c) 1988 University of Oulu, Computing Center\
 #include <stdio.h>
 #include "netdb.h"
 #include <sys/socket.h>
-#include <fcntl.h>
 #ifdef __hpux
 #include "inet.h"
 #endif
@@ -69,7 +68,7 @@ aConfItem	*conf = (aConfItem *)NULL;
 
 extern	int	portnum;
 extern	char	*configfile;
-extern	long	nextconnect, nextping;
+extern	long	nextconnect;
 
 static aConfItem *make_conf()
     {
@@ -374,7 +373,7 @@ int	statmask;
 		** matches *either* host or name field of the configuration.
 		*/
 		if ((tmp->status & statmask) &&
-		    (!tmp->name || (matches(tmp->name, name) == 0)))
+		    (matches(tmp->name, name) == 0))
 			break;
 	    }
 	return(tmp);
@@ -433,8 +432,8 @@ int	statmask;
 
 int rehash()
     {
-	Reg1	aConfItem *tmp = conf, *tmp2;
-	Reg2	aClass	*cltmp;
+	Reg1 aConfItem *tmp = conf, *tmp2;
+	Reg2 aClass *cltmp;
 
 	while (tmp)
 	    {
@@ -463,7 +462,6 @@ int rehash()
 	for (cltmp = NextClass(FirstClass()); cltmp; cltmp = NextClass(cltmp))
 		MaxLinks(cltmp) = -1;
 
-	close_listeners();
 	conf = (aConfItem *) 0;
 	return initconf(1);
     }
@@ -483,16 +481,16 @@ extern char *getfield();
 int 	initconf(rehashing)
 int rehashing;
     {
-	int fd;
+	FILE *fd;
 	char line[512], *tmp, c[80];
 	int ccount = 0, ncount = 0;
 	aConfItem *aconf;
 	struct hostent *hp;
 
 	debug(DEBUG_DEBUG, "initconf(%d)", rehashing);
-	if ((fd = open(configfile, O_RDONLY)) == -1)
+	if (!(fd = fopen(configfile,"r")))
 		return(-1);
-	while (dgets(fd,line,sizeof(line)-1)>0)
+	while (fgets(line,sizeof(line)-1,fd))
 	    {
 		if (line[0] == '#' || line[0] == '\n' ||
 		    line[0] == ' ' || line[0] == '\t')
@@ -501,7 +499,7 @@ int rehashing;
 
 		if (tmp = (char *)index(line, '\n'))
 			*tmp = 0;
-		else while(dgets(fd, c, sizeof(c))>0)
+		else while(fgets(c, sizeof(c), fd))
 		    {
 			if (tmp = (char *)index(c, '\n'))
 				*tmp= 0;
@@ -573,10 +571,6 @@ int rehashing;
 		      aconf->status = CONF_RESTRICT;
 		      break;
 #endif
-		    case 'P': /* listen port line */
-		    case 'p':
-			aconf->status = CONF_LISTEN_PORT;
-			break;
 		    default:
 			debug(DEBUG_ERROR, "Error in config file: %s", line);
 			break;
@@ -620,14 +614,8 @@ int rehashing;
 		  continue;
 		}
 
-		if (aconf->status & CONF_LISTEN_PORT)
-		    {
-			add_listener(aconf->host, aconf->port);
-			conf = conf->next;
-			free_conf(aconf);
-			continue;
-		    }
-		if (aconf->status & CONF_SERVER_MASK) {
+		if (aconf->status & (CONF_CONNECT_SERVER |
+		    CONF_NOCONNECT_SERVER)) {
 		  if (ncount > MAXCONFLINKS || ccount > MAXCONFLINKS ||
 		      aconf->host && index(aconf->host, '*')) {
 		    conf = aconf->next;
@@ -640,7 +628,9 @@ int rehashing;
                 ** associate each conf line with a class by using a pointer
                 ** to the correct class record. -avalon
                 */
-		if (aconf->status & CONF_CLIENT_MASK) {
+		if (aconf->status & (CONF_CONNECT_SERVER | CONF_CLIENT |
+		    CONF_NOCONNECT_SERVER | CONF_OPERATOR | CONF_LOCOP |
+		    CONF_SERVICE )) {
 		  if (Class(aconf) == 0)
 		    Class(aconf) = find_class(0);
 		  if (MaxLinks(Class(aconf)) < 0)
@@ -651,11 +641,8 @@ int rehashing;
 		** ip numbers in conf structure.
 		*/
 		aconf->ipnum.s_addr = -1;
-		while (!rehashing && (aconf->status & CONF_SERVER_MASK)) {
-		    if (BadPtr(aconf->host))
-			break;
-		    if (!isalpha(*aconf->host) && !isdigit(*aconf->host))
-			break;
+		while (!rehashing && (aconf->status &
+		       (CONF_CONNECT_SERVER|CONF_NOCONNECT_SERVER))) {
 		    if (aconf->host && (hp = gethostbyname(aconf->host))) {
 			bcopy(hp->h_addr, &(aconf->ipnum), hp->h_length);
 			if (aconf->ipnum.s_addr)
@@ -695,9 +682,9 @@ int rehashing;
 		      aconf->status, aconf->host, aconf->passwd,
 		      aconf->name, aconf->port, Class(aconf));
 	    }
-	close(fd);
+	fclose(fd);
 	check_class();
-	nextping = nextconnect = time(NULL);
+	nextconnect = time(NULL);
 	return (0);
     }
 
@@ -763,7 +750,7 @@ aClient	*cptr;
 	name = cptr->user->username;
 	host = cptr->sockhost;
 	hlen = strlen(host);
-	nlen = strlen(name);
+	name = strlen(name);
 
 	for (tmp = conf; tmp; tmp = tmp->next)
 	  if (tmp->status == CONF_RESTRICT &&

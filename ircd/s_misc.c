@@ -31,11 +31,6 @@ char smisc_id[]="s_misc.c v2.0 (c) 1988 University of Oulu, Computing Centers\
 #include "sys.h"
 #include "numeric.h"
 #include <sys/stat.h>
-#include <fcntl.h>
-#ifdef HPUX
-# include <sys/syscall.h>
-# define getrusage(a,b) syscall(SYS_GETRUSAGE, a, b)
-#endif
 #ifdef GETRUSAGE_2
 # include <sys/resource.h>
 #else
@@ -71,27 +66,30 @@ static char *weekdays[] = {
 char	*date(clock) 
 long	clock;
 {
-	static	char	buf[80], plus;
+	static	char	buf[80];
 	Reg1	struct	tm *ltbuf;
 	struct	timeval	tp;
 	struct	timezone tzp;
-	int	minswest;
+	Reg2	char	*timezonename;
+#if !(defined(HPUX) || defined(AIX) || defined(PCS))
+	extern char *timezone();
+#endif
 
 	if (!clock) 
 		time(&clock);
 	ltbuf = localtime(&clock);
 	gettimeofday(&tp, &tzp);
 
-	minswest = tzp.tz_minuteswest;
+#if defined(HPUX) || defined(AIX) || defined(PCS)
+	tzset();
+	timezonename = tzname[ltbuf->tm_isdst];
+#else
+	timezonename = timezone(tzp.tz_minuteswest, ltbuf->tm_isdst);
+#endif
 
-	plus = (minswest > 0) ? '-' : '+';
-	if (minswest < 0)
-		minswest = -minswest;
-
-	sprintf(buf, "%s %s %d 19%02d -- %02d:%02d %c%02d:%02d",
+	sprintf(buf, "%s %s %d 19%02d -- %02d:%02d %s",
 		weekdays[ltbuf->tm_wday], months[ltbuf->tm_mon],ltbuf->tm_mday,
-		ltbuf->tm_year, ltbuf->tm_hour,	ltbuf->tm_min,
-		plus, minswest/60, minswest%60);
+		ltbuf->tm_year, ltbuf->tm_hour,	ltbuf->tm_min, timezonename);
 
 	return buf;
 }
@@ -120,7 +118,6 @@ long value;
 
 	return buf;
 }
-
 /*
 ** check_registered_user is used to cancel message, if the
 ** originator is a server or not registered yet. In other
@@ -196,20 +193,13 @@ int	showip;
 {
 	static char nbuf[sizeof(sptr->name)+sizeof(sptr->sockhost)+3];
 
-	if (MyConnect(sptr))
+	if (MyConnect(sptr) && mycmp(sptr->name,sptr->sockhost))
 	    {
 		if (showip)
-			sprintf(nbuf, "%s[%s.%u]",
-				sptr->name, inet_ntoa(sptr->ip),
-				(unsigned int)sptr->port);
+			sprintf(nbuf, "%s[%s.%d]",
+				sptr->name, inet_ntoa(sptr->ip), sptr->port);
 		else
-		    {
-			if (mycmp(sptr->name, sptr->sockhost))
-				sprintf(nbuf, "%s[%s]",
-					sptr->name, sptr->sockhost);
-			else
-				return sptr->name;
-		    }
+			sprintf(nbuf, "%s[%s]", sptr->name, sptr->sockhost);
 		return nbuf;
 	    }
 	return sptr->name;
@@ -298,8 +288,8 @@ char	*comment;	/* Reason for the exit */
 				sptr->user->username, sptr->user->host);
 # else
 	    {
-		int	userlogfile;
-		char	linebuf[160];
+		FILE *userlogfile;
+		struct stat stbuf;
 
 		/*
  		 * This conditional makes the logfile active only after
@@ -311,17 +301,16 @@ char	*comment;	/* Reason for the exit */
 		 * file in 3 seconds. -avalon (curtesy of wumpus)
 		 */
 		alarm(3);
-		if (IsPerson(sptr) &&
-		    (userlogfile = open(FNAME_USERLOG, O_WRONLY|O_APPEND)))
+		if (IsPerson(sptr) && !stat(FNAME_USERLOG, &stbuf) &&
+		    (userlogfile = fopen(FNAME_USERLOG, "a")))
 		    {
 			alarm(0);
-			sprintf(linebuf, "%s (%3d:%02d:%02d): %s@%s\n",
+			fprintf(userlogfile, "%s (%3d:%02d:%02d): %s@%s\n",
 				myctime(sptr->firsttime),
 				on_for / 3600, (on_for % 3600)/60,
 				on_for % 60,
 				sptr->user->username, sptr->user->host);
-			write(userlogfile, linebuf, strlen(linebuf));
-			close(userlogfile);
+			fclose(userlogfile);
 		    }
 		alarm(0);
 		/* Modification by stealth@caen.engin.umich.edu */
@@ -329,16 +318,8 @@ char	*comment;	/* Reason for the exit */
 # endif
 #endif
 		if (sptr->fd >= 0)
-		    {
-		      if (cptr != NULL)
-			sendto_one(sptr, "ERROR :Closing Link: %s %s (%s)",
-				   get_client_name(sptr,FALSE),
-				   cptr->name, comment);
-		      else
-			sendto_one(sptr, "ERROR :Closing Link: %s (%s)",
-				   get_client_name(sptr,FALSE),
-				   comment);
-		    }
+			sendto_one(sptr, "ERROR :Closing Link: %s(%s)",
+				   get_client_name(sptr,FALSE), comment);
 		/*
 		** Currently only server connections can have
 		** depending remote clients here, but it does no
@@ -462,6 +443,8 @@ char *comment;
 		*/
 		if (sptr->user) {
 		  Link *tmp;
+		  add_history(sptr);
+		  off_history(sptr);
 		  sendto_common_channels(sptr, ":%s QUIT :%s",
 					 sptr->name, comment);
 		  for (link = sptr->user->channel; link; link = tmp) {
@@ -487,22 +470,6 @@ char *comment;
 	remove_client_from_list(sptr);
 	return (0);
     }
-checklist()
-{
-#ifndef NO_AUTO_DIE
-	int	i,j;
-
-	if ((me.since - time(0)) < 600)
-		return;
-	for (j = i = 0; i <= highest_fd; i++)
-		if (!local[i])
-			continue;
-		else if (!IsMe(local[i]))
-			j++;
-	if (j<2)
-		exit(0);
-#endif
-}
 
 #ifdef DEBUGMODE
 /*
@@ -600,7 +567,7 @@ int	count_memory(cptr, nick)
 aClient	*cptr;
 char	*nick;
 {
-#if !defined(AIX) && !defined(NEXT)
+#ifndef AIX
 #  ifdef HPUX
 	extern	void	*etext;
 #  else
@@ -707,15 +674,15 @@ char	*nick;
 	sendto_one(cptr, ":%s NOTICE %s :Client Local %d(%d) Remote %d(%d)",
 		   me.name, nick, lc, lcm, rc, rcm);
 	sendto_one(cptr, ":%s NOTICE %s :Users %d(%d) Invites %d(%d)",
-		   me.name, nick, us, us*sizeof(anUser), usi,
+		   me.name, nick, us, usi*sizeof(anUser), usi,
 		   usi * sizeof(Link));
 	sendto_one(cptr, ":%s NOTICE %s :User channels %d(%d) Aways %d(%d)",
 		   me.name, nick, usc, usc*sizeof(Link), aw, awm);
 	sendto_one(cptr, ":%s NOTICE %s :Attached confs %d(%d)",
 		   me.name, nick, lcc, lcc*sizeof(Link));
 
-	totcl = lcm + rcm + us*sizeof(anUser) + usc*sizeof(Link) + awm;
-	totcl += lcc*sizeof(Link) + usi*sizeof(Link);
+	totcl = lcm + rcm + usi*sizeof(anUser) + usc*sizeof(Link) + awm;
+	totcl += lcc*sizeof(Link);
 
 	sendto_one(cptr, ":%s NOTICE %s :Conflines %d(%d)",
 		   me.name, nick, co, com);
@@ -742,7 +709,7 @@ char	*nick;
 		   me.name, nick, totww, totch, totcl, com);
 	sendto_one(cptr, ":%s NOTICE %s :TOTAL: %d sbrk(0)-etext: %d",
 		   me.name, nick, tot,
-#if !defined(AIX) && !defined(NEXT)
+#ifndef AIX
 		   (int)sbrk(0)-(int)etext);
 #else
 		   (int)sbrk(0));
