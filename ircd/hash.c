@@ -154,7 +154,7 @@ int	size;
 		if (!failure)
 			return size;
 	    }
-	/* return -1; */	/* Never reached */
+	/* return -1;	/* Never reached */
 }
 
 /*
@@ -358,6 +358,7 @@ aClient	*cptr;
 {
 	Reg	aClient	*tmp, *prev = NULL;
 	Reg	int	hashv;
+	int	hv;
 
 	hashv = cptr->hashv;
 	if (hashv < 0)
@@ -404,6 +405,7 @@ aChannel	*chptr;
 {
 	Reg	aChannel	*tmp, *prev = NULL;
 	Reg	int	hashv;
+	int	hv;
 
 	hashv = chptr->hashv;
 	if (hashv < 0)
@@ -446,6 +448,7 @@ aClient	*cptr;
 {
 	Reg	aServer	*tmp, *prev = NULL;
 	Reg	int	hashv;
+	int	hv;
 
 	hashv = sptr->stok * 15053;
 	if (hashv < 0)
@@ -773,7 +776,7 @@ char	*parv[];
 		for (i = 0; i < 10; i++)
 			sendto_one(sptr,"NOTICE %s :Entires with %d links : %d",
 			parv[0], i, link_pop[i]);
-		return (1);
+		return (0);
 	case 'r' :
 	    {
 		Reg	aClient	*acptr;
@@ -799,13 +802,13 @@ char	*parv[];
 			sendto_one(sptr,"NOTICE %s :%s hash to entry %d",
 				   parv[0], parv[2],
 				   hash_channel_name(parv[2]));
-		return (1);
+		return (0);
 	case 'h' :
 		if (parc > 2)
 			sendto_one(sptr,"NOTICE %s :%s hash to entry %d",
 				   parv[0], parv[2],
 				   hash_nick_name(parv[2]));
-		return (1);
+		return (0);
 	case 'n' :
 	    {
 		aClient	*tmp;
@@ -827,7 +830,7 @@ char	*parv[];
 				sendto_one(sptr,"NOTICE %s :Node: %d #%d %s",
 					   parv[0], l, i, tmp->name);
 			    }
-		return (1);
+		return (0);
 	    }
 	case 'N' :
 	    {
@@ -846,7 +849,7 @@ char	*parv[];
 			     i++, tmp = tmp->hnextch)
 				sendto_one(sptr,"NOTICE %s :Node: %d #%d %s",
 					   parv[0], l, i, tmp->chname);
-		return (1);
+		return (0);
 	    }
 	case 'S' :
 #else
@@ -856,14 +859,16 @@ char	*parv[];
 	sendto_one(sptr, "NOTICE %s :[SSERV] [IRCDC]", parv[0]);
 	sendto_one(sptr, "NOTICE %s :[CHANC] [SMISC]", parv[0]);
 	sendto_one(sptr, "NOTICE %s :[HASHC] [VERSH]", parv[0]);
-	sendto_one(sptr, "NOTICE %s :[MAKEF] HOSTID", parv[0]);
+	sendto_one(sptr, "NOTICE %s :[SBSDC] HOSTID", parv[0]);
 #ifndef	DEBUGMODE
 	}
 #endif
-	    return 1;
+	    return 0;
 #ifdef	DEBUGMODE
 	case 'z' :
 	    {
+		Reg	aClient	*acptr;
+
 		if (parc <= 2)
 			return 0;
 		l = atoi(parv[2]);
@@ -875,12 +880,15 @@ char	*parv[];
 	    }
 	case 'Z' :
 	    {
+		Reg	aChannel	*acptr;
+
 		if (parc <= 2)
 			return 0;
 		l = atoi(parv[2]);
 		if (l < 256)
 			return 0;
-		bigger_hash_table(&_CHANNELHASHSIZE, channelTable, l);
+		bigger_hash_table(&_CHANNELHASHSIZE,
+						 channelTable, l);
 		sendto_one(sptr, "NOTICE %s :CHANNELHASHSIZE now %d",
 			   parv[0], l);
 		break;
@@ -908,6 +916,6 @@ char	*parv[];
 		   parv[0], clhits, clmiss);
 	sendto_one(sptr,"NOTICE %s :Channel hits %d miss %d",
 		   parv[0], chhits, chmiss);
-	return 1;
+	return 0;
 #endif
 }

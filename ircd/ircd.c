@@ -42,7 +42,6 @@ aClient *client = &me;		/* Pointer to beginning of Client list */
 void	server_reboot();
 void	restart __P((char *));
 static	void	open_debugfile(), setup_signals();
-time_t	io_loop __P((time_t));
 
 istat_t	istat;
 char	**myargv;
@@ -516,14 +515,9 @@ aClient	*mp;
 static	int	bad_command()
 {
   (void)printf(
-	 "Usage: ircd [-a] [-c] [-d path]%s [-h servername] [-q] [-o] [-i] [-T tunefile] [-v]%s\n",
+	 "Usage: ircd %s[-h servername] [-p portnumber] [-x loglevel] [-t]\n",
 #ifdef CMDLINE_CONFIG
-	 " [-f config]",
-#else
-	 "",
-#endif
-#ifdef DEBUGMODE
-	 " [-x loglevel] [-t]"
+	 "[-f config] "
 #else
 	 ""
 #endif
@@ -728,7 +722,7 @@ char	*argv[];
 	setup_me(&me);
 	check_class();
 	ircd_writetune(tunefile);
-/* This cannot be right anymore..
+
 	if (bootopt & BOOT_INETD)
 	    {
 		aClient	*tmp;
@@ -744,7 +738,6 @@ char	*argv[];
 		(void)inetport(tmp, "*", 0);
 		local[0] = tmp;
 	    }
-*/
 	if (bootopt & BOOT_OPER)
 	    {
 		aClient *tmp = add_connection(&me, 0);
@@ -767,7 +760,7 @@ char	*argv[];
 }
 
 
-time_t	io_loop(delay)
+io_loop(delay)
 time_t	delay;
 {
 	static	time_t	nextc = 0, nextactive = 0, lastl = 0;
@@ -826,7 +819,7 @@ time_t	delay;
 	if (timeofday > nextc)
 	    {
 		(void)read_message(delay, &fdall);
-		nextc = timeofday + HUB;
+		nextc = timeofday + HUB + 1;
 	    }
 	else
 	    {
@@ -866,8 +859,7 @@ time_t	delay;
 	if (dorestart)
 		restart("Caught SIGINT");
 	if (dorehash)
-	    {	/* Only on signal, not on oper /rehash */
-		ircd_writetune(tunefile);
+	    {
 		(void)rehash(&me, &me, 1);
 		dorehash = 0;
 	    }
@@ -997,7 +989,7 @@ static	void	setup_signals()
 
 /*
  * Called from bigger_hash_table(), s_die(), server_reboot(),
- * main(after initializations), grow_history(), rehash(io_loop) signal.
+ * main(after initializations), grow_history().
  */
 void ircd_writetune(filename)
 char *filename;
@@ -1009,12 +1001,8 @@ char *filename;
 		(void) fprintf(fp, "%d\n%d\n%d\n%d\n%d\n%d\n", ww_size,
 			       lk_size, _HASHSIZE, _CHANNELHASHSIZE,
 			       _SERVERSIZE, poolsize);
-		sendto_flag(SCH_NOTICE, "Wrote %s.", filename);
 		fclose(fp);
 	    }
-	else
-		sendto_flag(SCH_ERROR, "Failed (%d) to open tune file: %s.",
-			    errno, filename);
 }
 
 /*

@@ -171,19 +171,17 @@ aClient	*cptr, *sptr;
 int	parc;
 char	*parv[];
 {
-	Reg	aClient	*acptr = NULL;
+	Reg	aClient	*acptr;
 	Reg	aService *svc;
-#ifdef  USE_SERVICES
 	Reg	aConfItem *aconf;
-#endif
 	aServer	*sp = NULL;
-	char	*dist, *server = NULL, *info;
-	int	type, metric = 0, i/*, tok = 1*/;
+	char	*dist, *server, *info;
+	int	type, metric, len, i/*, tok = 1*/;
 
 	if (sptr->user)
 	    {
 		sendto_one(sptr, err_str(ERR_ALREADYREGISTRED, parv[0]));
-		return 1;
+		return 0;
 	    }
 
 	if (parc < 7 || *parv[1] == '\0' || *parv[2] == '\0' ||
@@ -191,7 +189,7 @@ char	*parv[];
 	    {
 		sendto_one(cptr, err_str(ERR_NEEDMOREPARAMS,
 			   BadPtr(parv[0]) ? "*" : parv[0]), "SERVICE");
-		return 1;
+		return 0;
 	    }
 
 	/* Copy parameters into better documenting variables */
@@ -218,7 +216,7 @@ char	*parv[];
 #ifndef	USE_SERVICES
 	    {
 		sendto_one(cptr, "ERROR :Server doesn't support services");
-		return 1;
+		return 0;
 	    }
 #endif
 
@@ -236,7 +234,7 @@ char	*parv[];
 		    {
 			sendto_one(sptr, err_str(ERR_ERRONEUSNICKNAME,
 				   parv[0]));
-			return 1;
+			return 0;
 		    }
 		if (strlen(parv[1]) + strlen(server) + 2 >= (size_t) HOSTLEN)
 		    {
@@ -344,7 +342,6 @@ char	*parv[];
 				   acptr->name, sp->server, sp->dist,
 				   sp->type, acptr->hopcount, acptr->info);
 	sendto_one(sptr, rpl_str(RPL_SERVLISTEND, parv[0]), mask, type);
-	return 1;
 }
 
 
@@ -357,13 +354,13 @@ char	*parv[];
 	if (!IsService(sptr) || (IsService(sptr) && sptr->service->wants))
 	    {
 		sendto_one(sptr, err_str(ERR_NOPRIVILEGES, parv[0]));
-		return 1;
+		return;
 	    }
 	if (parc < 2)
 	    {
 		sendto_one(sptr, err_str(ERR_NEEDMOREPARAMS, parv[0]),
 			   "SERVSET");
-		return 1;
+		return;
 	    }
 	if (!sptr->service->wants)
 		sptr->service->wants = atoi(parv[1]) & sptr->service->type;
@@ -389,9 +386,9 @@ char	*parv[];
 		if (parc == 1)
 			sendto_one(sptr, err_str(ERR_NORECIPIENT, parv[0]),
 				   "SQUERY");
-		else if (parc == 2 || BadPtr(parv[1]))
+		else if (parc == 2 || BadPtr(parv[2]))
 			sendto_one(sptr, err_str(ERR_NOTEXTTOSEND, parv[0]));
-		return 1;
+		return;
 	    }
 
 	if ((acptr = best_service(parv[1], NULL)))
@@ -399,5 +396,5 @@ char	*parv[];
 			   parv[0], acptr->name, parv[2]);
 	else
 		sendto_one(sptr, err_str(ERR_NOSUCHSERVICE, parv[0]), parv[1]);
-	return 1;
+	return 0;
 }

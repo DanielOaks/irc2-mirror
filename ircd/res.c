@@ -34,7 +34,7 @@
 static  char sccsid[] = "@(#)res.c	1.1 1/21/95 (C) 1992 Darren Reed";
 #endif
 
-#undef	DEBUG	/* because there is a lot of debug code in here :-) */
+#define	DEBUG	/* because there is a lot of debug code in here :-) */
 
 extern	int	errno, h_errno;
 extern	int	highest_fd;
@@ -91,7 +91,7 @@ static	struct	resinfo {
 int	init_resolver(op)
 int	op;
 {
-	int	ret = 0;
+	int	ret = 0, on = 0;
 
 #ifdef	LRAND48
 	srand48(time(NULL));
@@ -104,10 +104,10 @@ int	op;
 	if (op & RES_CALLINIT)
 	    {
 		ret = res_init();
-		if (!ircd_res.nscount)
+		if (!_res.nscount)
 		    {
-			ircd_res.nscount = 1;
-			ircd_res.nsaddr_list[0].sin_addr.s_addr =
+			_res.nscount = 1;
+			_res.nsaddr_list[0].sin_addr.s_addr =
 				inet_addr("127.0.0.1");
 		    }
 	    }
@@ -121,7 +121,7 @@ int	op;
 	    }
 #ifdef DEBUG
 	if (op & RES_INITDEBG);
-		ircd_res.options |= RES_DEBUG;
+		_res.options |= RES_DEBUG;
 #endif
 	if (op & RES_INITCACH)
 	    {
@@ -290,7 +290,7 @@ char	*cp;
 }
 
 /*
- * sends msg to all nameservers found in the "ircd_res" structure.
+ * sends msg to all nameservers found in the "_res" structure.
  * This should reflect /etc/resolv.conf. We will get responses
  * which arent needed but is easier than checking to see if nameserver
  * isnt present. Returns number of messages successfully sent to 
@@ -306,16 +306,16 @@ int	len, rcount;
 	if (!msg)
 		return -1;
 
-	max = MIN(ircd_res.nscount, rcount);
-	if (ircd_res.options & RES_PRIMARY)
+	max = MIN(_res.nscount, rcount);
+	if (_res.options & RES_PRIMARY)
 		max = 1;
 	if (!max)
 		max = 1;
 
 	for (i = 0; i < max; i++)
 	    {
-		ircd_res.nsaddr_list[i].sin_family = AF_INET;
-		if (sendto(resfd, msg, len, 0, (SAP)&(ircd_res.nsaddr_list[i]),
+		_res.nsaddr_list[i].sin_family = AF_INET;
+		if (sendto(resfd, msg, len, 0, (SAP)&(_res.nsaddr_list[i]),
 			   sizeof(struct sockaddr)) == len)
 		    {
 			reinfo.re_sent++;
@@ -385,11 +385,11 @@ Reg	ResRQ	*rptr;
 	(void)strncpy(hname, name, sizeof(hname) - 1);
 	len = strlen(hname);
 
-	if (rptr && !index(hname, '.') && ircd_res.options & RES_DEFNAMES)
+	if (rptr && !index(hname, '.') && _res.options & RES_DEFNAMES)
 	    {
 		(void)strncat(hname, dot, sizeof(hname) - len - 1);
 		len++;
-		(void)strncat(hname, ircd_res.defdname, sizeof(hname) - len -1);
+		(void)strncat(hname, _res.defdname, sizeof(hname) - len -1);
 	    }
 
 	/*
@@ -555,13 +555,13 @@ HEADER	*hptr;
 
 		len = strlen(hostbuf);
 		/* name server never returns with trailing '.' */
-		if (!index(hostbuf,'.') && (ircd_res.options & RES_DEFNAMES))
+		if (!index(hostbuf,'.') && (_res.options & RES_DEFNAMES))
 		    {
 			(void)strcat(hostbuf, dot);
 			len++;
-			(void)strncat(hostbuf, ircd_res.defdname,
+			(void)strncat(hostbuf, _res.defdname,
 				sizeof(hostbuf) - 1 - len);
-			len = MIN(len + strlen(ircd_res.defdname),
+			len = MIN(len + strlen(_res.defdname),
 				  sizeof(hostbuf) - 1);
 		    }
 
@@ -647,7 +647,7 @@ char	*lp;
 	static	char	buf[sizeof(HEADER) + MAXPACKET];
 	Reg	HEADER	*hptr;
 	Reg	ResRQ	*rptr = NULL;
-	aCache	*cp = NULL;
+	aCache	*cp;
 	struct	sockaddr_in	sin;
 	int	rc, a, len = sizeof(sin), max;
 
@@ -680,14 +680,14 @@ char	*lp;
 	/*
 	 * check against possibly fake replies
 	 */
-	max = MIN(ircd_res.nscount, rptr->sends);
+	max = MIN(_res.nscount, rptr->sends);
 	if (!max)
 		max = 1;
 
 	for (a = 0; a < max; a++)
-		if (!ircd_res.nsaddr_list[a].sin_addr.s_addr ||
+		if (!_res.nsaddr_list[a].sin_addr.s_addr ||
 		    !bcmp((char *)&sin.sin_addr,
-			  (char *)&ircd_res.nsaddr_list[a].sin_addr,
+			  (char *)&_res.nsaddr_list[a].sin_addr,
 			  sizeof(struct in_addr)))
 			break;
 	if (a == max)
@@ -737,9 +737,6 @@ char	*lp;
 	if (a && rptr->type == T_PTR)
 	    {
 		struct	hostent	*hp2 = NULL;
-
-		if (BadPtr(rptr->he.h_name))	/* Kludge!	960907/Vesa */
-			goto getres_err;
 
 		Debug((DEBUG_DNS, "relookup %s <-> %s",
 			rptr->he.h_name, inetntoa((char *)&rptr->he.h_addr)));
@@ -799,9 +796,9 @@ getres_err:
 			 * If we havent tried with the default domain and its
 			 * set, then give it a try next.
 			 */
-			if (ircd_res.options & RES_DEFNAMES && ++rptr->srch == 0)
+			if (_res.options & RES_DEFNAMES && ++rptr->srch == 0)
 			    {
-				rptr->retries = ircd_res.retry;
+				rptr->retries = _res.retry;
 				rptr->sends = 0;
 				rptr->resend = 1;
 				resend_query(rptr);

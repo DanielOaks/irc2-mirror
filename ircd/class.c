@@ -64,7 +64,7 @@ aClient	*acptr;
 {
 	Reg	Link	*tmp;
 	Reg	aClass	*cl;
-	int	retc = BAD_CLIENT_CLASS;
+	int	i = 0, retc = BAD_CLIENT_CLASS;
 
 	if (acptr && !IsMe(acptr)  && (acptr->confs))
 		for (tmp = acptr->confs; tmp; tmp = tmp->next)

@@ -34,10 +34,9 @@
 #else
 # include "cdefs.h"
 #endif
-#include <sys/param.h>
 #ifdef HAVE_SYS_BITYPES_H
 # include <sys/bitypes.h>
-#elif (!defined(BSD)) || (BSD < 199306)
+#else
 # include "bitypes.h"
 #endif
 
@@ -94,7 +93,6 @@ extern	char	*rindex __P((char *, char));
 #endif
 
 extern	VOIDSIG	dummy();
-extern	VOIDSIG s_die __P(());
 
 #ifdef	DYNIXPTX
 # define	NO_U_TYPES

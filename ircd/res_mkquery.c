@@ -70,6 +70,8 @@ static char rcsid[] = "$Id: res_mkquery.c,v 8.3 1995/06/29 09:26:28 vixie Exp $"
 #include "resolv.h"
 #if defined(BSD) && (BSD >= 199103)
 # include <string.h>
+#else
+# include "config.h"
 #endif
 
 #if defined(USE_OPTIONS_H)
@@ -99,12 +101,12 @@ res_mkquery(op, dname, class, type, data, datalen, newrr_in, buf, buflen)
 #endif
 	u_char *dnptrs[20], **dpp, **lastdnptr;
 
-	if ((ircd_res.options & RES_INIT) == 0 && res_init() == -1) {
+	if ((_res.options & RES_INIT) == 0 && res_init() == -1) {
 		h_errno = NETDB_INTERNAL;
 		return (-1);
 	}
 #ifdef DEBUG
-	if (ircd_res.options & RES_DEBUG)
+	if (_res.options & RES_DEBUG)
 		printf(";; res_mkquery(%d, %s, %d, %d)\n",
 		       op, dname, class, type);
 #endif
@@ -115,9 +117,9 @@ res_mkquery(op, dname, class, type, data, datalen, newrr_in, buf, buflen)
 		return (-1);
 	bzero(buf, HFIXEDSZ);
 	hp = (HEADER *) buf;
-	hp->id = htons(++ircd_res.id);
+	hp->id = htons(++_res.id);
 	hp->opcode = op;
-	hp->rd = (ircd_res.options & RES_RECURSE) != 0;
+	hp->rd = (_res.options & RES_RECURSE) != 0;
 	hp->rcode = NOERROR;
 	cp = buf + HFIXEDSZ;
 	buflen -= HFIXEDSZ;

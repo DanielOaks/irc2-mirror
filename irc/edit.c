@@ -24,7 +24,7 @@ char edit_id[] = "edit.c v2.0 (c) 1988 University of Oulu, Computing\
 #include <curses.h>
 #include <signal.h>
 #include "struct.h"
-#ifdef HAVE_UNISTD_H
+#ifdef  UNISTDH
 #include <unistd.h>
 #endif
 #include "common.h"
@@ -240,8 +240,8 @@ void del_ch_left()
 
 void suspend_irc()
 {
-#if defined(HPUX) || defined(BSD) || defined(AIX) || defined(SGI) || \
-    defined(_SEQUENT_) || defined(linux) || defined(SVR4)
+#if defined(HPUX) || defined(mips) || defined(AIX) || defined(SOL20) || \
+    defined(_SEQUENT_) || defined(linux) || defined(SVR4) || defined(OSF)
 	signal(SIGTSTP, (void(*)__P((int)))suspend_irc);
 # ifdef DOCURSES
                 if (termtype == CURSES_TERM) {
