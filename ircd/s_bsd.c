@@ -35,7 +35,7 @@
  */
 
 #ifndef lint
-static  char rcsid[] = "@(#)$Id: s_bsd.c,v 1.42 1998/10/27 10:01:28 kalt Exp $";
+static  char rcsid[] = "@(#)$Id: s_bsd.c,v 1.40 1998/09/18 22:02:27 kalt Exp $";
 #endif
 
 #include "os.h"
@@ -415,8 +415,7 @@ void	close_listeners()
 }
 
 void
-start_iauth(rcvdsig)
-int rcvdsig;
+start_iauth()
 {
 #if defined(USE_IAUTH)
 	static time_t last = 0;
@@ -432,7 +431,7 @@ int rcvdsig;
 		return;
 	    }
 	read_iauth(); /* to reset olen */
-	if ((time(NULL) - last) > 300 || rcvdsig)
+	if ((time(NULL) - last) > 300)
 	    {
 		sendto_flag(SCH_AUTH, "Starting iauth...");
 		last = time(NULL);
@@ -510,7 +509,7 @@ void	init_sys()
 			(void)fprintf(stderr, "Hard Limit: %d IRC max: %d\n",
 				      (int) limit.rlim_max, MAXCONNECTIONS);
 			(void)fprintf(stderr,
-				      "Fix MAXCONNECTIONS and recompile.\n");
+				      "Recompile and fix MAXCONNECTIONS\n");
 			exit(-1);
 		    }
 		limit.rlim_cur = limit.rlim_max; /* make soft limit the max */
@@ -599,7 +598,7 @@ void	init_sys()
 init_dgram:
 	resfd = init_resolver(0x1f);
 
-	start_iauth(0);
+	start_iauth();
 }
 
 void	write_pidfile()
