@@ -352,13 +352,13 @@ char *argv[];
 		switch (flag)
 		    {
 		    case 'd': /* Per user local daemon... */
-                        seteuid(getuid());
+                        setuid(getuid());
 			autodie = 1;
                         debugtty = -1;  /* mark fd 0 to be oper connection */
 		        break;
 #ifdef CMDLINE_CONFIG
 		    case 'f':
-                        seteuid(getuid());
+                        setuid(getuid());
 			configfile = p;
 			break;
 #endif
@@ -373,12 +373,12 @@ char *argv[];
 				portnum = length;
 			break;
 		    case 'x':
-                        seteuid(getuid());
+                        setuid(getuid());
 			debuglevel = atoi(p);
 			debugmode = *p ? p : "0";
 			break;
 		    case 't':
-                        seteuid(getuid());
+                        setuid(getuid());
 			debugtty = 1;
 			break;
 		    case 'i':
@@ -393,11 +393,8 @@ char *argv[];
 	setuid(geteuid());
 	if (getuid() == 0)
 	    {
-		int nobody = -2;
-		fprintf(stderr,"WARNING: running ircd with uid = 0\n");
-		fprintf(stderr,"         changing to gid/uid %d.\n",nobody);
-		setgid(nobody);
-		setuid(nobody);
+		setgid(-2);
+		setuid(-2);
 	    } 
 
 	if (debuglevel == -1)  /* didn't set debuglevel */
