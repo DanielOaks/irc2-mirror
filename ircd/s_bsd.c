@@ -35,7 +35,7 @@
  */
 
 #ifndef lint
-static const volatile char rcsid[] = "@(#)$Id: s_bsd.c,v 1.171.2.2 2005/05/13 19:11:43 chopin Exp $";
+static const volatile char rcsid[] = "@(#)$Id: s_bsd.c,v 1.171 2004/11/19 15:42:08 chopin Exp $";
 #endif
 
 #include "os.h"
@@ -1673,8 +1673,6 @@ aClient	*add_connection(aClient *cptr, int fd)
 	acptr = make_client(NULL);
 
 	aconf = cptr->confs->value.aconf;
-	acptr->acpt = cptr;
-
 	/* Removed preliminary access check. Full check is performed in
 	 * m_server and m_user instead. Also connection time out help to
 	 * get rid of unwanted connections.
@@ -1721,7 +1719,6 @@ aClient	*add_connection(aClient *cptr, int fd)
 		{
 			sendto_flag(SCH_LOCAL, "Rejecting connection from %s.",
 				acptr->sockhost);
-			acptr->exitc = EXITC_CLONE;
 			sendto_flog(acptr, EXITC_CLONE, "", acptr->sockhost);
 #ifdef DELAY_CLOSE
 			nextdelayclose = delay_close(fd);
@@ -1765,6 +1762,7 @@ aClient	*add_connection(aClient *cptr, int fd)
 		highest_fd = fd;
 	local[fd] = acptr;
 	add_fd(fd, &fdall);
+	acptr->acpt = cptr;
 	add_client_to_list(acptr);
 	start_auth(acptr);
 #if defined(USE_IAUTH)
@@ -2616,7 +2614,7 @@ free_server:
 		if (by && IsPerson(by) && !MyClient(by))
 		  sendto_one(by,
 			     ":%s NOTICE %s :Connect to host %s failed.",
-			     ME, by->name, cptr->name);
+			     ME, by->name, cptr);
 		errno = i;
 		if (errno == EINTR)
 			errno = ETIMEDOUT;
@@ -2642,7 +2640,7 @@ free_server:
 		if (by && IsPerson(by) && !MyClient(by))
 		  sendto_one(by,
 			     ":%s NOTICE %s :Connect to host %s failed.",
-			     ME, by->name, cptr->name);
+			     ME, by->name, cptr);
 		det_confs_butmask(cptr, 0);
 		goto free_server;
 	    }

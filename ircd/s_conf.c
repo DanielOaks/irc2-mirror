@@ -48,7 +48,7 @@
  */
 
 #ifndef lint
-static const volatile char rcsid[] = "@(#)$Id: s_conf.c,v 1.153.2.2 2005/02/17 15:21:16 chopin Exp $";
+static const volatile char rcsid[] = "@(#)$Id: s_conf.c,v 1.153 2004/12/06 17:07:22 chopin Exp $";
 #endif
 
 #include "os.h"
@@ -1397,11 +1397,6 @@ int 	initconf(int opt)
 	    }
 #if defined(CONFIG_DIRECTIVE_INCLUDE)
 	fdn = fdopen(fd, "r");
-	if (fdn == NULL)
-	{
-		close(fd);
-		return -1;
-	}
 	ConfigTop = config_read(fdn, 0, new_config_file(configfile, NULL, 0));
 	for(p = ConfigTop; p; p = p->next)
 #else
@@ -2303,11 +2298,9 @@ aConfItem	*find_denied(char *name, int class)
  * Parses 0w1d2h3m4s timeformat, filling in output variable in seconds.
  * Returns 0 if everything went ok.
  */
-int	wdhms2sec(char *input, time_t *output)
+int	wdhms2sec(char *input, int *output)
 {
-#ifndef TKLINE_MULTIPLIER
-#define TKLINE_MULTIPLIER 60
-#endif
+#define DEFAULT_MULTI 60
 	int multi;
 	int tmp = 0;
 	char *s;
@@ -2319,7 +2312,7 @@ int	wdhms2sec(char *input, time_t *output)
 	s = input;
 	while (*s)
 	{
-		switch(tolower(*s))
+		switch(*s)
 		{
 		case 'w':
 			multi = 604800; break;
@@ -2339,7 +2332,7 @@ int	wdhms2sec(char *input, time_t *output)
 					s++;
 				if (!*s)
 				{
-					*output += TKLINE_MULTIPLIER * tmp;
+					*output += DEFAULT_MULTI * tmp;
 				}
 				continue;
 			}
@@ -2354,8 +2347,7 @@ int	wdhms2sec(char *input, time_t *output)
 
 int	m_tkline(aClient *cptr, aClient *sptr, int parc, char **parv)
 {
-	int	status = CONF_TKILL;
-	time_t	time;
+	int	time, status = CONF_TKILL;
 	char	*user, *host, *reason;
 	int	i;
 
@@ -2411,7 +2403,7 @@ int	m_tkline(aClient *cptr, aClient *sptr, int parc, char **parv)
  *
  * Returns created tkline expire time.
  */
-void do_tkline(char *who, time_t time, char *user, char *host, char *reason, int status)
+void do_tkline(char *who, int time, char *user, char *host, char *reason, int status)
 {
 	char buff[BUFSIZE];
 	aClient	*acptr;
@@ -2452,7 +2444,7 @@ void do_tkline(char *who, time_t time, char *user, char *host, char *reason, int
 		}
 		tkconf = aconf;
 	}
-	sendto_flag(SCH_TKILL, "TKLINE %s@%s (%u) by %s :%s",
+	sendto_flag(SCH_TKILL, "TKLINE %s@%s (%d) by %s :%s",
 		aconf->name, aconf->host, time, who, reason);
 
 	/* get rid of tklined clients */
