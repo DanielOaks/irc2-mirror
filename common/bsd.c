@@ -18,35 +18,28 @@
  *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-/*
- * $Id: bsd.c,v 6.1 1991/07/04 21:03:52 gruner stable gruner $
- *
- * $Log: bsd.c,v $
- * Revision 6.1  1991/07/04  21:03:52  gruner
- * Revision 2.6.1 [released]
- *
- * Revision 6.0  1991/07/04  18:04:47  gruner
- * frozen beta revision 2.6.1
- *
- */
-
 char bsd_id[] = "bsd.c v2.0 (c) 1988 University of Oulu, Computing Center and\
  Jarkko Oikarinen";
 
 #include "config.h"
 #include "common.h"
+#include "struct.h"
 #include "sys.h"
 #include <signal.h>
 #include <sys/errno.h>
 
 extern int errno; /* ...seems that errno.h doesn't define this everywhere */
 
+#ifdef DEBUGMODE
+int	writecalls = 0, writeb[10];
+#endif
 VOIDSIG dummy()
     {
-#if !HAVE_RELIABLE_SIGNALS
+#ifndef HAVE_RELIABLE_SIGNALS
 	signal(SIGALRM, dummy);
 #endif
     }
+
 
 /*
 ** deliver_it
@@ -67,17 +60,24 @@ VOIDSIG dummy()
 **		work equally well whether blocking or non-blocking
 **		mode is used...
 */
-int deliver_it(fd, str, len)
-int fd, len;
+int deliver_it(cptr, str, len)
+aClient *cptr;
+int len;
 char *str;
     {
 	int retval;
 
+#ifdef DEBUGMODE
+	if (writecalls == 0)
+		for (retval = 0; retval < 10; retval++)
+			writeb[retval] = 0;
+	writecalls++;
+#endif
 	alarm(WRITEWAITDELAY);
-#if VMS
-	retval = netwrite(fd, str, len);
+#ifdef VMS
+	retval = netwrite(cptr->fd, str, len);
 #else
-	retval = write(fd, str, len);
+	retval = write(cptr->fd, str, len);
 	/*
 	** Convert WOULDBLOCK to a return of "0 bytes moved". This
 	** should occur only if socket was non-blocking. Note, that
@@ -87,8 +87,36 @@ char *str;
 	** ...now, would this work on VMS too? --msa
 	*/
 	if (retval < 0 && errno == EWOULDBLOCK)
+	    {
 		retval = 0;
+		cptr->flags |= FLAGS_BLOCKED;
+	    }
+	else if (retval > 0)
+		cptr->flags &= ~FLAGS_BLOCKED;
+
 #endif
 	alarm(0);
+#ifdef DEBUGMODE
+	if (retval < 0)
+		writeb[0]++;
+	else if (retval == 0)
+		writeb[1]++;
+	else if (retval < 16)
+		writeb[2]++;
+	else if (retval < 32)
+		writeb[3]++;
+	else if (retval < 64)
+		writeb[4]++;
+	else if (retval < 128)
+		writeb[5]++;
+	else if (retval < 256)
+		writeb[6]++;
+	else if (retval < 512)
+		writeb[7]++;
+	else if (retval < 1024)
+		writeb[8]++;
+	else
+		writeb[9]++;
+#endif
 	return(retval);
     }

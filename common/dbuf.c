@@ -17,18 +17,6 @@
  *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-/*
- * $Id: dbuf.c,v 6.1 1991/07/04 21:03:54 gruner stable gruner $
- *
- * $Log: dbuf.c,v $
- * Revision 6.1  1991/07/04  21:03:54  gruner
- * Revision 2.6.1 [released]
- *
- * Revision 6.0  1991/07/04  18:04:48  gruner
- * frozen beta revision 2.6.1
- *
- */
-
 /* -- Jto -- 20 Jun 1990
  * extern void free() fixed as suggested by
  * gruner@informatik.tu-muenchen.de
@@ -53,6 +41,13 @@
 #include "dbuf.h"
 #include "sys.h"
 
+#if !defined(VALLOC) && !defined(valloc)
+#define	valloc malloc
+#endif
+
+int	dbufalloc = 0, dbufblocks = 0;
+static	dbufbuf	*freelist = NULL;
+
 /* This is a dangerous define because a broken compiler will set DBUFSIZ
 ** to 4, which will work but will be very inefficient. However, there
 ** are other places where the code breaks badly if this is screwed
@@ -62,12 +57,61 @@
 #define DBUFSIZ sizeof(((dbufbuf *)0)->data)
 
 /*
+** dbuf_alloc - allocates a dbufbuf structure either from freelist or
+** creates a new one.
+*/
+static dbufbuf *dbuf_alloc()
+{
+	Reg1	dbufbuf	*dbptr, *db2ptr;
+	Reg2	int	num;
+
+	dbufalloc++;
+	if (dbptr = freelist)
+	    {
+		freelist = freelist->next;
+		return dbptr;
+	    }
+
+#ifdef	VALLOC
+	num = getpagesize()/sizeof(dbufbuf);
+	if (num < 0)
+		num = 1;
+
+	dbufblocks += num;
+
+	dbptr = (dbufbuf *)valloc(num*sizeof(dbufbuf));
+	if (!dbptr)
+		return (dbufbuf *)NULL;
+
+	for (db2ptr = dbptr; num > 1; num--)
+	    {
+		db2ptr = (dbufbuf *)((char *)dbptr + sizeof(dbufbuf));
+		db2ptr->next = freelist;
+		freelist = db2ptr;
+	    }
+	return dbptr;
+#else
+	dbufblocks++;
+	return (dbufbuf *)MyMalloc(sizeof(dbufbuf));
+#endif
+}
+/*
+** dbuf_free - return a dbufbuf structure to the freelist
+*/
+static	void	dbuf_free(ptr)
+Reg1	dbufbuf	*ptr;
+{
+	dbufalloc--;
+	ptr->next = freelist;
+	freelist = ptr;
+}
+/*
 ** This is called when malloc fails. Scrap the whole content
 ** of dynamic buffer and return -1. (malloc errors are FATAL,
 ** there is no reason to continue this buffer...). After this
 ** the "dbuf" has consistent EMPTY status... ;)
 */
-static int malloc_error(dyn)
+static int dbuf_malloc_error(dyn)
 dbuf *dyn;
     {
 	dbufbuf *p;
@@ -83,14 +127,14 @@ dbuf *dyn;
     }
 
 
-int dbuf_put(dyn, buf, length)
-dbuf *dyn;
-char *buf;
-long int length;
+int	dbuf_put(dyn, buf, length)
+dbuf	*dyn;
+char	*buf;
+long	length;
     {
-	dbufbuf **h, *d;
-	long int nbr, off;
-	int chunk;
+	Reg1	dbufbuf	**h, *d;
+	Reg2	int	nbr, off;
+	Reg3	int	chunk;
 
 	off = (dyn->offset + dyn->length) % DBUFSIZ;
 	nbr = (dyn->offset + dyn->length) / DBUFSIZ;
@@ -110,14 +154,14 @@ long int length;
 	    {
 		if ((d = *h) == NULL)
 		    {
-			if ((d = (dbufbuf *)malloc(sizeof(dbufbuf))) == NULL)
-				return malloc_error(dyn);
+			if ((d = (dbufbuf *)dbuf_alloc()) == NULL)
+				return dbuf_malloc_error(dyn);
 			*h = d;
 			d->next = NULL;
 		    }
 		if (chunk > length)
 			chunk = length;
-		bcopy(buf,d->data + off,chunk);
+		bcopy(buf, d->data + off, chunk);
 		length -= chunk;
 		buf += chunk;
 		off = 0;
@@ -126,10 +170,10 @@ long int length;
 	return 1;
     }
 
-		
-char *dbuf_map(dyn,length)
-dbuf *dyn;
-long int *length;
+
+char	*dbuf_map(dyn,length)
+dbuf	*dyn;
+int	*length;
     {
 	if (dyn->head == NULL)
 	    {
@@ -142,9 +186,9 @@ long int *length;
 	return (dyn->head->data + dyn->offset);
     }
 
-int dbuf_delete(dyn,length)
-dbuf *dyn;
-long int length;
+int	dbuf_delete(dyn,length)
+dbuf	*dyn;
+long	length;
     {
 	dbufbuf *d;
 	int chunk;
@@ -164,23 +208,23 @@ long int length;
 			d = dyn->head;
 			dyn->head = d->next;
 			dyn->offset = 0;
-			free((void *)d);
+			dbuf_free(d);
 		    }
 		chunk = DBUFSIZ;
 	    }
 	return 0;
     }
 
-long int dbuf_get(dyn,buf,length)
-dbuf *dyn;
-char *buf;
-long int length;
+long	dbuf_get(dyn,buf,length)
+dbuf	*dyn;
+char	*buf;
+long	length;
     {
-	long int moved = 0;
-	long int chunk;
-	char *b;
+	int	moved = 0;
+	int	chunk;
+	char	*b;
 
-	while (length > 0 && (b = dbuf_map(dyn,&chunk)) != NULL)
+	while (length > 0 && (b = dbuf_map(dyn, &chunk)) != NULL)
 	    {
 		if (chunk > length)
 			chunk = length;
@@ -192,5 +236,3 @@ long int length;
 	    }
 	return moved;
     }
-
-

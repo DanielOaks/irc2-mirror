@@ -18,18 +18,6 @@
  *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-/*
- * $Id: parse.c,v 6.1 1991/07/04 21:03:58 gruner stable gruner $
- *
- * $Log: parse.c,v $
- * Revision 6.1  1991/07/04  21:03:58  gruner
- * Revision 2.6.1 [released]
- *
- * Revision 6.0  1991/07/04  18:04:51  gruner
- * frozen beta revision 2.6.1
- *
- */
-
 /* -- Jto -- 03 Jun 1990
  * Changed the order of defines...
  */
@@ -55,10 +43,10 @@ char userhost[USERLEN+HOSTLEN+2];
 static char sender[HOSTLEN+1];
 #endif
 
-int myncmp(str1, str2, n)
-Reg1 u_char *str1;
-Reg2 u_char *str2;
-int n;
+int	myncmp(str1, str2, n)
+Reg1	u_char	*str1;
+Reg2	u_char	*str2;
+int	n;
     {
 #ifdef USE_OUR_CTYPE
 	while (toupper(*str1) == toupper(*str2))
@@ -80,10 +68,12 @@ int n;
 **	return	0, if equal
 **		1, if not equal
 */
-int mycmp(str1, str2)
-Reg1 u_char *str1;
-Reg2 u_char *str2;
+int mycmp(s1, s2)
+char *s1;
+char *s2;
     {
+	Reg1 u_char *str1 = (u_char *)s1;
+	Reg2 u_char *str2 = (u_char *)s2;
 #ifdef USE_OUR_CTYPE
 	while (toupper(*str2) == toupper(*str1))
 #else
@@ -109,14 +99,14 @@ Reg2 u_char *str2;
 */
 #ifndef CLIENT_COMPILE
 aClient *find_client(name, cptr)
-char *name;
+char	*name;
 aClient *cptr;
     {
 	Reg1 aClient *c2ptr;
 
 	if (name) {
 		c2ptr = hash_find_client(name, cptr);
-		return c2ptr;
+		return (c2ptr ? c2ptr : cptr);
 	}
 	return cptr;
     }
@@ -213,7 +203,7 @@ aClient *cptr;
           break;
     }
   }
-  return c2ptr;
+  return (c2ptr ? c2ptr : cptr);
 }
 #else
 aClient *find_server(name, cptr)
@@ -250,7 +240,7 @@ aClient *cptr;
 		return cptr;
     }
 
-parse(cptr, buffer, length, mptr)
+int parse(cptr, buffer, length, mptr)
 aClient *cptr;
 char *buffer;
 int length;
@@ -326,7 +316,7 @@ struct Message *mptr;
 			}
 		      if (from->from != cptr)
 			{
-			  debug(DEBUG_FATAL,
+			  debug(DEBUG_ERROR,
 				"Message (%s) coming from (%s)",
 				buffer, cptr->name);
 			  return (-1);
@@ -344,7 +334,7 @@ struct Message *mptr;
 	/*
 	** Extract the command code from the packet
 	*/
-	ch2 = index(ch, ' '); /* ch2 -> End of the command code */
+	ch2 = (char *)index(ch, ' '); /* ch2 -> End of the command code */
 	len = (ch2) ? (ch2 - ch) : strlen(ch);
 	if (len == 3 &&
 	    isdigit(*ch) && isdigit(*(ch + 1)) && isdigit(*(ch + 2)))
@@ -391,7 +381,7 @@ struct Message *mptr;
 			return(-1);
 		    }
 		paramcount = mptr->parameters;
-		if ((mptr->flags & 1) && (!IsServer(cptr) && !IsService(cptr)))
+		if ((mptr->flags & 1) && (!IsServer(cptr) && !IsService(cptr) && !IsOper(cptr)))
 		  cptr->since += 2;  /* Allow only 1 msg per 2 seconds
 				      * (on average) to prevent dumping.
 				      * to keep the response rate up,
@@ -443,7 +433,7 @@ struct Message *mptr;
 	    }
 	para[++i] = NULL;
 	if (mptr == NULL)
-		return (DoNumeric(numeric, cptr, from, i, para));
+		return (do_numeric(numeric, cptr, from, i, para));
 	else
 	    {
 		mptr->count++;
@@ -455,11 +445,11 @@ struct Message *mptr;
     }
 
 
-char *getfield(newline)
-char *newline;
-    {
-	static char *line = NULL;
-	char *end, *field;
+char	*getfield(newline)
+char	*newline;
+{
+	static	char *line = NULL;
+	char	*end, *field;
 	
 	if (newline)
 		line = newline;
@@ -467,14 +457,14 @@ char *newline;
 		return(NULL);
 
 	field = line;
-	if ((end = index(line,':')) == NULL)
+	if ((end = (char *)index(line,':')) == NULL)
 	    {
 		line = NULL;
-		if ((end = index(field,'\n')) == NULL)
+		if ((end = (char *)index(field,'\n')) == NULL)
 			end = field + strlen(field);
 	    }
 	else
 		line = end + 1;
 	*end = '\0';
 	return(field);
-    }
+}

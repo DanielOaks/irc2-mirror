@@ -17,7 +17,9 @@
 #*   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 #*/
 
-CC=cc 
+# choose your poison
+#CC=cc
+CC=gcc -traditional
 RM=/bin/rm
 INCLUDEDIR=../include
 
@@ -27,15 +29,17 @@ INCLUDEDIR=../include
 # CFLAGS=-bsd -I$(INCLUDEDIR)
 #otherwise this:
 CFLAGS= -I$(INCLUDEDIR) -g
+# with GCC 2.1, you can use this instead
+#CFLAGS= -I$(INCLUDEDIR) -g -O
 
-#use the following on SUN OS without nameserver libraries inside libc
-IRCDLIBS= -lresolv
-#
 #on NeXT other than 2.0:
 # IRCDLIBS=-lsys_s
 #
 # HPUX: (was IRCDLIBS= -lBSD but apparently its not needed)
 # IRCDLIBS=
+#
+# PCS MUNIX:
+# IRCDLIBS= -lresolv -lbsd -lc_s
 #
 #and otherwise:
 #IRCDLIBS=
@@ -50,15 +54,19 @@ IRCDMODE = 4711
 MAKE = make 'CFLAGS=${CFLAGS}' 'CC=${CC}' 'IRCDLIBS=${IRCDLIBS}'\
 	'IRCDMODE=${IRCDMODE}'
 SHELL=/bin/sh
-SUBDIRS=common ircd irc
+# don't make the client by default, it's broken anyway
+SUBDIRS=common ircd # irc
 
 all:	build
+
+sun: all
+	IRCDLIBS=-lresolv
 
 server:
 	@echo 'Making server'; cd ircd; ${MAKE} build; cd ..;
 
 client:
-	@echo 'Makign client'; cd irc; ${MAKE} build; cd ..;
+	@echo 'Making client'; cd irc; ${MAKE} build; cd ..;
 
 build:
 	@for i in $(SUBDIRS); do \
@@ -74,6 +82,10 @@ clean:
 		cd $$i;\
 		${MAKE} clean; cd ..;\
 	done
+	@echo "Cleaning res"; cd res; make clean; cd ..;
+
+bindircd: server
+	cd ircd; ${MAKE} bindircd; cd ..;
 
 depend:
 	@for i in $(SUBDIRS); do \

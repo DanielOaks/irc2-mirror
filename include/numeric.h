@@ -18,6 +18,12 @@
  */
 
 /*
+ * -- Avalon -- 13 May 1992
+ *
+ * Added RPL_STATSLLINE
+ */
+
+/*
  * -- Avalon -- 12 Jan 1992
  *
  * Added RPL_TRACELINK
@@ -54,6 +60,17 @@
  * Added ERR_CANNOTSENDTOCHAN...
  */
 
+/*
+ * Reserve numerics 000-099 for server-client connections where the client
+ * is local to the server. If any server is passed a numeric in this range
+ * from another server then it is remapped to 100-199. -avalon
+ */
+#define	RPL_MYINFO           001
+
+/*
+ * Errors are in the range from 400-599 currently and are grouped by what
+ * commands they come from.
+ */
 #define ERR_NOSUCHNICK       401
 #define ERR_NOSUCHSERVER     402
 #define ERR_NOSUCHCHANNEL    403
@@ -78,6 +95,7 @@
 
 #define ERR_USERNOTINCHANNEL 441
 #define ERR_NOTONCHANNEL     442
+#define	ERR_USERONCHANNEL    443
 
 #define ERR_NOTREGISTERED    451
 
@@ -102,6 +120,10 @@
 #define ERR_UMODEUNKNOWNFLAG 501
 #define ERR_USERSDONTMATCH   502
 
+/*
+ * Numberic replies from server commands.
+ * These are currently in the range 200-399.
+ */
 #define RPL_AWAY             301
 #define RPL_USERHOST         302
 #define RPL_ISON             303
@@ -181,42 +203,8 @@
 
 #define RPL_SERVICEINFO      231
 #define RPL_ENDOFSERVICES    232
+#define	RPL_SERVICE          233
+#define RPL_SERVLIST         234
+#define RPL_SERVLISTEND      235
 
-/*
-** CheckRegisteredUser is a macro to cancel message, if the
-** originator is a server or not registered yet. In other
-** words, passing this test, *MUST* guarantee that the
-** sptr->user exists (not checked after this--let there
-** be coredumps to catch bugs... this is intentional --msa ;)
-**
-** There is this nagging feeling... should this NOT_REGISTERED
-** error really be sent to remote users? This happening means
-** that remote servers have this user registered, althout this
-** one has it not... Not really users fault... Perhaps this
-** error message should be restricted to local clients and some
-** other thing generated for remotes...
-*/
-
-#define CheckRegisteredUser(x) do { \
-  if (!IsRegisteredUser(x)) \
-    { \
-	sendto_one(sptr, ":%s %d * :You have not registered as a user", \
-		   me.name, ERR_NOTREGISTERED); \
-	return -1;\
-    } \
-  } while (0)
-
-/*
-** CheckRegistered user cancels message, if 'x' is not
-** registered (e.g. we don't know yet whether a server
-** or user)
-*/
-
-#define CheckRegistered(x) do { \
-  if (!IsRegistered(x)) \
-    { \
-	sendto_one(sptr, ":%s %d * :You have not registered yourself yet", \
-		   me.name, ERR_NOTREGISTERED); \
-	return -1;\
-    } \
-  } while (0)
+#define	RPL_STATSLLINE       241
