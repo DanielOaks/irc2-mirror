@@ -22,7 +22,7 @@
  */
 
 #ifndef lint
-static const volatile char rcsid[] = "@(#)$Id: s_serv.c,v 1.297 2009/11/13 20:08:11 chopin Exp $";
+static const volatile char rcsid[] = "@(#)$Id: s_serv.c,v 1.292 2008/06/11 19:53:34 chopin Exp $";
 #endif
 
 #include "os.h"
@@ -1924,7 +1924,7 @@ int	m_stats(aClient *cptr, aClient *sptr, int parc, char *parv[])
 		/* send list of file descriptors 
 		 * Avaible only for local opers for security reasons.
 		 */
-		if (!is_allowed(sptr, ACL_TRACE) || !MyConnect(sptr))
+		if (!IsAnOper(sptr) || !MyConnect(sptr))
 		{
 			stat = '*';
 			break;
@@ -2852,17 +2852,12 @@ int	m_etrace(aClient *cptr, aClient *sptr, int parc, char *parv[])
 	if (parc > 1)
 	{
 		if ((acptr = find_person(parv[1], NULL)) && MyClient(acptr))
-			sendto_one(sptr, replies[RPL_ETRACEFULL],
+			sendto_one(sptr, replies[RPL_ETRACE],
 				ME, sptr->name,
-				IsAnOper(acptr) ? "Oper" : "User",
+				IsOper(acptr) ? "Oper" : "User",
 				get_client_class(acptr),
 				acptr->name, acptr->user->username,
 				acptr->user->host, acptr->user->sip,
-#ifdef XLINE
-				acptr->user2, acptr->user3, 
-#else
-				"-", "-",
-#endif
 				acptr->info);
 	}
 	else
@@ -2875,17 +2870,12 @@ int	m_etrace(aClient *cptr, aClient *sptr, int parc, char *parv[])
 			if (!IsPerson(acptr))
 				continue;
 		
-			sendto_one(sptr, replies[RPL_ETRACEFULL],
+			sendto_one(sptr, replies[RPL_ETRACE],
 				ME, sptr->name, 
-				IsAnOper(acptr) ? "Oper" : "User", 
+				IsOper(acptr) ? "Oper" : "User", 
 				get_client_class(acptr), 
 				acptr->name, acptr->user->username, 
 				acptr->user->host, acptr->user->sip,
-#ifdef XLINE
-				acptr->user2, acptr->user3, 
-#else
-				"-", "-",
-#endif
 				acptr->info);
 		}
 	}
@@ -2911,18 +2901,12 @@ int	m_sidtrace(aClient *cptr, aClient *sptr, int parc, char *parv[])
 		if (strncmp(acptr->user->uid, me.serv->sid, SIDLEN-1))
 			continue;
 
-		sendto_one(sptr, replies[RPL_ETRACEFULL],
+		sendto_one(sptr, replies[RPL_ETRACE],
 			ME, sptr->name,
 			IsAnOper(acptr) ? "Oper" : "User", 
 			MyClient(acptr) ? get_client_class(acptr) : -1, 
 			acptr->name, acptr->user->username,
 			acptr->user->host, acptr->user->sip, 
-#ifdef XLINE
-			MyClient(acptr) ? acptr->user2 : "-",
-			MyClient(acptr) ? acptr->user3 : "-",
-#else
-			"-", "-",
-#endif
 			acptr->info);
 	}
 
@@ -3262,15 +3246,11 @@ int	m_set(aClient *cptr, aClient *sptr, int parc, char *parv[])
 				{
 					iconf.aconnect = 0;
 				}
-				else if (!mycmp(parv[2], "ND"))
-				{
-					iconf.aconnect = 2;
-				}
 				else
 				{
 					sendto_one(sptr, ":%s NOTICE %s SET "
 						":Illegal value for ACONNECT. "
-						"Possible values: ON OFF ND",
+						"Possible values: ON OFF",
 						ME, parv[0]);
 					break;
 				}
@@ -3377,8 +3357,7 @@ int	m_set(aClient *cptr, aClient *sptr, int parc, char *parv[])
 		if (acmd & TSET_ACONNECT)
 		{
 			sendto_one(sptr, ":%s NOTICE %s :ACONNECT = %s", ME,
-				parv[0], iconf.aconnect == 2 ? "ND" : 
-				(iconf.aconnect == 1 ? "ON" : "OFF"));
+				parv[0], iconf.aconnect == 1 ? "ON" : "OFF");
 		}
 		if (acmd & TSET_CACCEPT)
 		{

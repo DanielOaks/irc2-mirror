@@ -48,7 +48,7 @@
  */
 
 #ifndef lint
-static const volatile char rcsid[] = "@(#)$Id: s_conf.c,v 1.192 2009/11/13 20:25:55 chopin Exp $";
+static const volatile char rcsid[] = "@(#)$Id: s_conf.c,v 1.182 2008/06/10 13:52:18 chopin Exp $";
 #endif
 
 #include "os.h"
@@ -333,9 +333,6 @@ long	oline_flags_parse(char *string)
 #endif
 #ifndef OPER_SQUIT
 	tmp &= ~ACL_SQUIT;
-#endif
-#ifndef OPER_SQUIT_REMOTE
-	tmp &= ~ACL_SQUITREMOTE;
 #endif
 #ifndef OPER_CONNECT
 	tmp &= ~ACL_CONNECT;
@@ -1013,12 +1010,20 @@ aConfItem	*find_conf_exact(char *name, char *user, char *host,
  */
 aConfItem	*find_Oline(char *name, aClient *cptr)
 {
-	Reg	aConfItem *tmp, *tmp2 = NULL;
+	Reg	aConfItem *tmp;
 	char	userhost[USERLEN+HOSTLEN+3];
 	char	userip[USERLEN+HOSTLEN+3];
 
 	sprintf(userhost, "%s@%s", cptr->username, cptr->sockhost);
-	sprintf(userip, "%s@%s", cptr->username, cptr->user->sip);
+	sprintf(userip, "%s@%s", cptr->username, 
+#ifdef INET6
+		(char *)inetntop(AF_INET6, (char *)&cptr->ip, ipv6string,
+			sizeof(ipv6string))
+#else
+		(char *)inetntoa((char *)&cptr->ip)
+#endif
+	);
+
 
 	for (tmp = conf; tmp; tmp = tmp->next)
 	    {
@@ -1035,10 +1040,8 @@ aConfItem	*find_Oline(char *name, aClient *cptr)
 			continue;
 		if (tmp->clients < MaxLinks(Class(tmp)))
 			return tmp;
-		else
-			tmp2 = tmp;
 	    }
-	return tmp2;
+	return NULL;
 }
 
 
@@ -1322,14 +1325,6 @@ int	openconf(void)
 {
 #ifdef	M4_PREPROC
 	int	pi[2], i;
-# ifdef HAVE_GNU_M4
-	char	*includedir, *includedirptr;
-
-	includedir = strdup(IRCDM4_PATH);
-	includedirptr = strrchr(includedir, '/');
-	if (includedirptr)
-		*includedirptr = '\0';
-# endif
 #else
 	int ret;
 #endif
@@ -1368,17 +1363,7 @@ int	openconf(void)
 		 * goes out with report_error.  Could be dangerous,
 		 * two servers running with the same fd's >:-) -avalon
 		 */
-		(void)execlp(M4_PATH, "m4",
-#ifdef HAVE_GNU_M4
-#ifdef USE_M4_PREFIXES
-			"-P",
-#endif
-			"-I", includedir,
-#endif
-#ifdef INET6
-			"-DINET6",
-#endif
-			IRCDM4_PATH, configfile, (char *) NULL);
+		(void)execlp(M4_PATH, "m4", IRCDM4_PATH, configfile, 0);
 		if (serverbooting)
 		{
 			fprintf(stderr,"Fatal Error: Error executing m4 (%s)",
@@ -1840,22 +1825,10 @@ int 	initconf(int opt)
 		if (aconf->status & CONF_SERVICE)
 			aconf->port &= SERVICE_MASK_ALL;
 		if (aconf->status & (CONF_SERVER_MASK|CONF_SERVICE))
-		{
-			char *hostptr = NULL;
-
-			/* since it's u@h syntax, let's ignore user part
-			   in checks below --B. */
-			hostptr = index(aconf->host, '@');
-			if (hostptr != NULL)
-				hostptr++;	/* move ptr after '@' */
-			else
-				hostptr = aconf->host;
-
-			if (ncount > MAXCONFLINKS || ccount > MAXCONFLINKS
-				|| !hostptr || index(hostptr, '*')
-				|| index(hostptr,'?') || !aconf->name)
-				continue;	/* next config line */
-		}
+			if (ncount > MAXCONFLINKS || ccount > MAXCONFLINKS ||
+			    !aconf->host || index(aconf->host, '*') ||
+			     index(aconf->host,'?') || !aconf->name)
+				continue;
 
 		if (aconf->status &
 		    (CONF_SERVER_MASK|CONF_OPERATOR|CONF_SERVICE))
@@ -2668,12 +2641,12 @@ int	prep_kline(int tkline, aClient *cptr, aClient *sptr, int parc, char **parv)
 	int	status = tkline ? CONF_TKILL : CONF_KILL;
 	time_t	time;
 	char	*user, *host, *reason;
-	int	err = 0;
+	int	i = 0;
 
 	/* sanity checks */
 	if (tkline)
 	{
-		err = wdhms2sec(parv[1], &time);
+		i = wdhms2sec(parv[1], &time);
 #ifdef TKLINE_MAXTIME
 		if (time > TKLINE_MAXTIME)
 			time = TKLINE_MAXTIME;
@@ -2692,24 +2665,19 @@ int	prep_kline(int tkline, aClient *cptr, aClient *sptr, int parc, char **parv)
 	
 	if (strlen(user) > USERLEN+HOSTLEN+1)
 	{
-		err = 1;
+		/* induce error */
+		i = 1;
 	}
 	if (!strcmp("@*", user) || !strcmp("*@", user) || !strcmp("@", user))
 	{
 		/* Note that we don't forbid "*@*", only those, that lack
 		** some crucial parts, which can be seen as a typo. --Beeth */
-		err = 1;
-	}
-	if (strchr(host, '/') && match_ipmask(host, sptr, 0) == -1)
-	{
-		/* check validity of 1.2.3.0/24 or it will be spewing errors
-		** for every connecting client. */
-		err = 1;
+		i = 1;
 	}
 #ifdef KLINE
 badkline:
 #endif
-	if (err || !host)
+	if (i || !host)
 	{
 		/* error */
 		if (!IsPerson(sptr))
@@ -2759,7 +2727,7 @@ badkline:
 		if (utmp || htmp || rtmp)
 		{
 			/* Too lazy to copy it here. --B. */
-			err = 1;
+			i = 1;
 			goto badkline;
 		}
 

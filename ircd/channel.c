@@ -32,7 +32,7 @@
  */
 
 #ifndef	lint
-static const volatile char rcsid[] = "@(#)$Id: channel.c,v 1.278 2009/11/13 19:32:44 chopin Exp $";
+static const volatile char rcsid[] = "@(#)$Id: channel.c,v 1.275 2008/06/11 18:16:12 chopin Exp $";
 #endif
 
 #include "os.h"
@@ -662,9 +662,8 @@ int	jp_chname(char *chname)
 	cn = chname;
 	while (*cn)
 	{
-		if (cn[0] == '\033'
-			&& (cn[1] == '$' || cn[1] == '(')
-			&& cn[2] == 'B')
+		if (cn[0] == '\033' && cn[2] == 'B'
+			&& (cn[1] == '$' || cn[1] == '('))
 		{
 			flag = (cn[1] == '$') ? 1 : 0;
 			cn += 2;
@@ -1046,11 +1045,7 @@ int	m_mode(aClient *cptr, aClient *sptr, int parc, char *parv[])
 	for (name = strtoken(&p, parv[1], ","); name;
 	     name = strtoken(&p, NULL, ","))
 	    {
-		if (clean_channelname(name) == -1)
-		{
-			penalty += 1;
-			continue;
-		}
+		clean_channelname(name);
 		chptr = find_channel(name, NullChn);
 		if (chptr == NullChn)
 		    {
@@ -1329,12 +1324,6 @@ static	int	set_mode(aClient *cptr, aClient *sptr, aChannel *chptr,
 				break;
 			if (whatt == MODE_ADD)
 			    {
-				/* stop key swapping during netjoin
-				** (prefer "highest" key) */
-				if (IsServer(sptr) && IsBursting(sptr) &&
-				    *mode->key && strncmp(mode->key, *parv,
-				    (size_t) KEYLEN) >= 0)
-					break;
 				if (ischop)
 				    {
 					if (**parv == ':')
@@ -1475,9 +1464,6 @@ static	int	set_mode(aClient *cptr, aClient *sptr, aChannel *chptr,
 #endif
 					break;
 				if (!(nusers = atoi(*++parv)))
-					break;
-				if (IsServer(sptr) && IsBursting(sptr) &&
-				    mode->limit >= nusers)
 					break;
 				lp = &chops[opcnt++];
 				lp->flags = MODE_ADD|MODE_LIMIT;
@@ -2057,7 +2043,7 @@ static	int	can_join(aClient *sptr, aChannel *chptr, char *key)
 ** Remove bells and commas from channel name
 */
 
-int	clean_channelname(char *cn)
+void	clean_channelname(char *cn)
 {
 	int flag = 0;
 
@@ -2066,15 +2052,14 @@ int	clean_channelname(char *cn)
 		if (*cn == '\007' || *cn == ' ' || (!flag && *cn == ','))
 		{
 			*cn = '\0';
-			return 0;
+			return;
 		}
 #ifdef JAPANESE
 		/* Japanese channel names can have comma in their name, but
 		** only between "\033$B" (begin) and "\033(B" (end) markers.
 		** So we mark it (using flag) for above check. --Beeth */
-		if (cn[0] == '\033'
-			&& (cn[1] == '$' || cn[1] == '(')
-			&& cn[2] == 'B')
+		if (cn[0] == '\033' && cn[2] == 'B' &&
+			(cn[1] == '$' || cn[1] == '('))
 		{
 			flag = (cn[1] == '$') ? 1 : 0;
 			cn += 2;
@@ -2082,8 +2067,9 @@ int	clean_channelname(char *cn)
 #endif
 		cn++;
 	}
-	/* If flag is 1 here, Japanese channel name is incomplete! */
-	return flag;
+	/* XXX Shouldn't we check, if flag==1 here? Wouldn that mean
+	** that Japanese channel name is incomplete? Would that be
+	** an error? --Beeth */
 }
 
 /*
@@ -2371,12 +2357,7 @@ int	m_join(aClient *cptr, aClient *sptr, int parc, char *parv[])
 			i = 1;
 			continue;
 		}
-		if (clean_channelname(name) == -1)
-		{
-			sendto_one(sptr, replies[ERR_NOSUCHCHANNEL],
-				ME, BadTo(parv[0]), name);
-			continue;
-		}
+		clean_channelname(name);
 		if (*name == '!')
 		{
 			chptr = NULL;
@@ -2501,9 +2482,7 @@ int	m_join(aClient *cptr, aClient *sptr, int parc, char *parv[])
 			continue;
 		}
 
-		/* Weren't those names just cleaned? --B. */
-		if (clean_channelname(name) == -1)
-			continue;
+		clean_channelname(name);
 
 		/* Get chptr for given name. Do not create channel yet.
 		** Can return NULL. */
@@ -3255,8 +3234,7 @@ int	m_invite(aClient *cptr, aClient *sptr, int parc, char *parv[])
 		sendto_one(sptr, replies[ERR_NOSUCHNICK], ME, BadTo(parv[0]), parv[1]);
 		return 1;
 	    }
-	if (clean_channelname(parv[2]) == -1)
-		return 1;
+	clean_channelname(parv[2]);
 	if (check_channelmask(sptr, acptr->user->servp->bcptr, parv[2]))
 		return 1;
 	if (*parv[2] == '&' && !MyClient(acptr))
@@ -3649,8 +3627,7 @@ int	m_names(aClient *cptr, aClient *sptr, int parc, char *parv[])
 	{
 		for (; (name = strtoken(&p, parv[1], ",")); parv[1] = NULL)
 		{
-			if (clean_channelname(name) == -1)
-				continue;
+			clean_channelname(name);
 			if BadPtr(name)
 			{
 				continue;

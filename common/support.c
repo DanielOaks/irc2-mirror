@@ -18,7 +18,7 @@
  */
 
 #ifndef lint
-static const volatile char rcsid[] = "@(#)$Id: support.c,v 1.46 2009/03/15 01:25:32 chopin Exp $";
+static const volatile char rcsid[] = "@(#)$Id: support.c,v 1.44 2008/06/03 22:32:46 chopin Exp $";
 #endif
 
 #include "os.h"
@@ -84,18 +84,20 @@ char	*strtoken(char **save, char *str, char *fs)
        int flag = 0;
        while (*pos)
        {
-           if (!flag && *pos == ',')
+	   if (!flag && *pos == ',')
            {
-               break;
-           }
-           else if (pos[0] == '\033'
-                   && (pos[1] == '$' || pos[1] == '(')
-                   && pos[2] == 'B')
+	       break;
+	   }
+           else if (pos[0] == '\033' && pos[2] == 'B' &&
+	   	(pos[1] == '$' || pos[1] == '('))
            {
-               flag = (pos[1] == '$') ? 1 : 0;
-               pos += 2;
-           }
-           pos++;
+	       pos += 3;
+	       flag = (pos[1] == '$') ? 1 : 0;
+	   }
+           else
+           {
+               pos++;
+	   }
        }
     }
     else
