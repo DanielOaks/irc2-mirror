@@ -18,7 +18,7 @@
  */
 
 #ifndef lint
-static  char rcsid[] = "@(#)$Id: iauth.c,v 1.11 1999/06/17 01:22:20 kalt Exp $";
+static  char rcsid[] = "@(#)$Id: iauth.c,v 1.16 2004/02/07 23:41:27 chopin Exp $";
 #endif
 
 #include "os.h"
@@ -29,8 +29,7 @@ static  char rcsid[] = "@(#)$Id: iauth.c,v 1.11 1999/06/17 01:22:20 kalt Exp $";
 
 static int do_log = 0;
 
-RETSIGTYPE dummy(s)
-int s;
+static	RETSIGTYPE	dummy(int s)
 {
 	/* from common/bsd.c */
 #ifndef HAVE_RELIABLE_SIGNALS
@@ -62,8 +61,7 @@ int s;
 #endif
 }
 
-RETSIGTYPE s_log(s)
-int s;
+static	RETSIGTYPE	s_log(int s)
 {
 # if POSIX_SIGNALS
         struct  sigaction act;
@@ -79,8 +77,7 @@ int s;
         do_log = 1;
 }
 
-void
-init_signals()
+static	void	init_signals(void)
 {
 	/* from ircd/ircd.c setup_signals() */
 #if POSIX_SIGNALS
@@ -135,9 +132,31 @@ init_signals()
 #endif
 }
 
-int	main(argc, argv)
-int	argc;
-char	*argv[];
+void	write_pidfile()
+{
+	int fd;
+	char pidbuf[32];
+	(void) truncate(IAUTHPID_PATH, 0);
+	if (( fd = open(IAUTHPID_PATH, O_CREAT|O_WRONLY, 0600)) >= 0)
+	{
+		memset(pidbuf, '0', sizeof(pidbuf));
+		(void) sprintf(pidbuf, "%d\n", (int)getpid());
+		if (write(fd, pidbuf, strlen(pidbuf)) == -1)
+		{
+			(void) printf("Error writing pidfile %s\n",
+				IAUTHPID_PATH);
+		}
+		(void) close(fd);
+	}
+	else
+	{
+		(void) printf("Error opening pidfile %s\n",
+			IAUTHPID_PATH);
+	}
+	return;
+}
+
+int	main(int argc, char *argv[])
 {
 	time_t	nextst = time(NULL) + 90;
 	char *xopt;
@@ -175,6 +194,7 @@ char	*argv[];
 
 	init_signals();
 	init_syslog();
+	xopt = conf_read(NULL);
 	init_filelogs();
 	sendto_log(ALOG_DMISC, LOG_NOTICE, "Daemon starting (%s%s).",
 		   make_version(),
@@ -185,7 +205,6 @@ char	*argv[];
 #endif
 		   );
 	init_io();
-	xopt = conf_read(NULL);
 	sendto_ircd("V %s", make_version());
 	sendto_ircd("O %s", xopt);
 	conf_ircd();
@@ -197,6 +216,7 @@ char	*argv[];
 #endif
 		sendto_ircd("G 0");
 
+	write_pidfile();
 	while (1)
 	    {
 		loop_io();
@@ -224,3 +244,4 @@ char	*argv[];
 		    }
 	    }
 }
+

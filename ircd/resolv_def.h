@@ -55,7 +55,7 @@
 
 /*
  *	@(#)resolv.h	8.1 (Berkeley) 6/2/93
- *	$Id: resolv_def.h,v 1.5 1999/01/20 01:33:08 kalt Exp $
+ *	$Id: resolv_def.h,v 1.7 2003/10/17 21:28:19 q Exp $
  */
 
 /*
@@ -118,7 +118,9 @@ struct __res_state {
 #define	RES_INSECURE1	0x00000400	/* type 1 security disabled */
 #define	RES_INSECURE2	0x00000800	/* type 2 security disabled */
 #define	RES_NOALIASES	0x00001000	/* shuts off HOSTALIASES feature */
+#ifndef HAVE_GETIPNODEBYNAME
 #define	RES_USE_INET6	0x00002000	/* use/map IPv6 in gethostbyname() */
+#endif
 
 #define RES_DEFAULT	(RES_RECURSE | RES_DEFNAMES | RES_DNSRCH)
 
@@ -150,19 +152,19 @@ struct __res_state {
 typedef enum { res_goahead, res_nextns, res_modified, res_done, res_error }
 	res_sendhookact;
 
-typedef res_sendhookact (*res_send_qhook)__P((struct SOCKADDR_IN * const *ns,
+typedef res_sendhookact (*res_send_qhook)(struct SOCKADDR_IN * const *ns,
 					      const u_char **query,
 					      int *querylen,
 					      u_char *ans,
 					      int anssiz,
-					      int *resplen));
+					      int *resplen);
 
-typedef res_sendhookact (*res_send_rhook)__P((const struct SOCKADDR_IN *ns,
+typedef res_sendhookact (*res_send_rhook)(const struct SOCKADDR_IN *ns,
 					      const u_char *query,
 					      int querylen,
 					      u_char *ans,
 					      int anssiz,
-					      int *resplen));
+					      int *resplen);
 #endif
 
 struct res_sym {

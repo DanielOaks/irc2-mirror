@@ -18,7 +18,7 @@
  */
 
 #ifndef lint
-static  char rcsid[] = "@(#)$Id: s_auth.c,v 1.43 1999/07/02 16:38:21 kalt Exp $";
+static  char rcsid[] = "@(#)$Id: s_auth.c,v 1.51 2003/10/18 19:48:21 q Exp $";
 #endif
 
 #include "os.h"
@@ -41,9 +41,7 @@ static  char rcsid[] = "@(#)$Id: s_auth.c,v 1.43 1999/07/02 16:38:21 kalt Exp $"
  *				and because it's used from attached_Iline()
  *		[		/trace parsing is impossible
  */
-static void
-set_clean_username(cptr)
-aClient *cptr;
+static	void	set_clean_username(aClient *cptr)
 {
 	int i = 0, dirty = 0;
 	char *s;
@@ -85,7 +83,7 @@ aClient *cptr;
 	    }
 	else
 	    {
-		istat.is_authmem += sizeof(cptr->auth);
+		istat.is_authmem += strlen(cptr->auth) + 1;
 		istat.is_auth += 1;
 	    }
 }
@@ -105,40 +103,45 @@ static aExtData	*iauth_stats = NULL;
  *	Send the buffer to the authentication slave process.
  *	Return 0 if everything went well, -1 otherwise.
  */
-#if ! USE_STDARG
-int
-sendto_iauth(pattern, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10)
-char    *pattern, *p1, *p2, *p3, *p4, *p5, *p6, *p7, *p8, *p9, *p10;
-#else
-int
-vsendto_iauth(char *pattern, va_list va)
-#endif
+int	vsendto_iauth(char *pattern, va_list va)
 {
-    static char abuf[BUFSIZ];
+	static char abuf[BUFSIZ], *p;
+	int	i, len;
 
-#if ! USE_STDARG
-    sprintf(abuf, pattern, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10);
-#else   
-    vsprintf(abuf, pattern, va);
-#endif  
-    strcat(abuf, "\n");
-
-    if (adfd < 0)
-	    return -1;
-    if (write(adfd, abuf, strlen(abuf)) != strlen(abuf))
+	if (adfd < 0)
 	{
-	    sendto_flag(SCH_AUTH, "Aiiie! lost slave authentication process");
-	    close(adfd);
-	    adfd = -1;
-	    start_iauth(0);
-	    return -1;
+		return -1;
 	}
-    return 0;
+
+	vsprintf(abuf, pattern, va);
+	strcat(abuf, "\n");
+	p = abuf;
+	len = strlen(p);
+
+	do
+	{
+		i = write(adfd, abuf, len);
+		if ( i == -1 )
+		{
+			if (errno != EAGAIN && errno != EWOULDBLOCK)
+			{
+				sendto_flag(SCH_AUTH, "Aiiie! lost slave "
+					"authentication process");
+				close(adfd);
+				adfd = -1;
+				start_iauth(0);
+				return -1;
+			}
+			i = 0;
+		}
+		p += i;
+		len -= i;
+	} while (len > 0);
+
+	return 0;
 }
 
-# if USE_STDARG
-int
-sendto_iauth(char *pattern, ...)
+int	sendto_iauth(char *pattern, ...)
 {
 	int i;
 
@@ -148,15 +151,13 @@ sendto_iauth(char *pattern, ...)
         va_end(va);
 	return i;
 }
-# endif
 
 /*
  * read_iauth
  *
  *	read and process data from the authentication slave process.
  */
-void
-read_iauth()
+void	read_iauth(void)
 {
     static char obuf[READBUF_SIZE+1], last = '?';
     static int olen = 0, ia_dbg = 0;
@@ -180,6 +181,7 @@ read_iauth()
 			    sendto_flag(SCH_AUTH, "Aiiie! lost slave authentication process (errno = %d)", errno);
 			    close(adfd);
 			    adfd = -1;
+			    olen = 0;
 			    start_iauth(0);
 			}
 		    break;
@@ -187,7 +189,7 @@ read_iauth()
 	    olen += i;
 	    buf[olen] = '\0';
 	    start = buf;
-	    while (end = index(start, '\n'))
+	    while ((end = index(start, '\n')))
 		{
 		    *end++ = '\0';
 		    last = *start;
@@ -236,7 +238,7 @@ read_iauth()
 			{
 			    aExtCf *ectmp;
 
-			    while (ectmp = iauth_conf)
+			    while ((ectmp = iauth_conf))
 				{
 				    iauth_conf = iauth_conf->next;
 				    MyFree(ectmp->line);
@@ -263,7 +265,7 @@ read_iauth()
 			{
 			    aExtData *ectmp;
 
-			    while (ectmp = iauth_stats)
+			    while ((ectmp = iauth_stats))
 				{
 				    iauth_stats = iauth_stats->next;
 				    MyFree(ectmp->line);
@@ -331,8 +333,14 @@ read_iauth()
 			    start = end;
 			    continue;
 			}
+#ifndef	INET6
 		    sprintf(tbuf, "%c %d %s %u ", start[0], i,
 			    inetntoa((char *)&cptr->ip), cptr->port);
+#else
+		    sprintf(tbuf, "%c %d %s %u ", start[0], i,
+			    inetntop(AF_INET6, (char *)&cptr->ip, 
+			    mydummy, MYDUMMY_SIZE), cptr->port);
+#endif
 		    if (strncmp(tbuf, start, strlen(tbuf)))
 			{
 			    /* this is fairly common and can be ignored */
@@ -360,7 +368,7 @@ read_iauth()
 				}
 			    if (cptr->auth != cptr->username)
 				{   
-				    istat.is_authmem -= sizeof(cptr->auth);
+				    istat.is_authmem -= strlen(cptr->auth) + 1;
 				    istat.is_auth -= 1;
 				    MyFree(cptr->auth);
 				}
@@ -381,7 +389,7 @@ read_iauth()
 				}
 			    if (cptr->auth != cptr->username)
 				{
-				    istat.is_authmem -= sizeof(cptr->auth);
+				    istat.is_authmem -= strlen(cptr->auth) + 1;
 				    istat.is_auth -= 1;
 				    MyFree(cptr->auth);
 				}
@@ -428,6 +436,18 @@ read_iauth()
 		      }
 		    else
 			{
+			    char *reason;
+
+			    /* Copy kill reason received from iauth */
+			    reason = strstr(start, " :");
+			    if (reason && (reason + 2 != '\0'))
+			    {
+				    if (cptr->reason)
+				    {
+					    MyFree(cptr->reason);
+				    }
+				    cptr->reason = mystrdup(reason + 2);
+			    }
 			    /*
 			    ** mark for kill, because it cannot be killed
 			    ** yet: we don't even know if this is a server
@@ -443,10 +463,9 @@ read_iauth()
 			}
 		    start = end;
 		}
-	    if (start != buf+olen)
-		    bcopy(start, obuf, olen = (buf+olen)-start+1);
-	    else
-		    olen = 0;
+	    olen -= start - buf;
+	    if (olen)
+		    memcpy(obuf, start, olen);
 	}
 }
 
@@ -455,10 +474,7 @@ read_iauth()
  *
  * called from m_stats(), this is the reply to /stats a
  */
-void
-report_iauth_conf(sptr, to)
-aClient *sptr;
-char *to;
+void	report_iauth_conf(aClient *sptr, char *to)
 {
 	aExtCf *ectmp = iauth_conf;
 
@@ -477,10 +493,7 @@ char *to;
  *
  * called from m_stats(), this is part of the reply to /stats t
  */
-void
-report_iauth_stats(sptr, to)
-aClient *sptr;
-char *to;
+void	report_iauth_stats(aClient *sptr, char *to)
 {
 	aExtData *ectmp = iauth_stats;
 
@@ -502,8 +515,7 @@ char *to;
  * identifing process fail, it is aborted and the user is given a username
  * of "unknown".
  */
-void	start_auth(cptr)
-Reg	aClient	*cptr;
+void	start_auth(aClient *cptr)
 {
 #ifndef	NO_IDENT
 	struct	SOCKADDR_IN	us, them;
@@ -661,8 +673,7 @@ Reg	aClient	*cptr;
  * problem since the socket should have a write buffer far greater than
  * this message to store it in should problems arise. -avalon
  */
-void	send_authports(cptr)
-aClient	*cptr;
+void	send_authports(aClient *cptr)
 {
 	struct	SOCKADDR_IN	us, them;
 
@@ -682,13 +693,13 @@ aClient	*cptr;
 		goto authsenderr;
 	    }
 
-	SPRINTF(authbuf, "%u , %u\r\n",
+	sprintf(authbuf, "%u , %u\r\n",
 		(unsigned int)ntohs(them.SIN_PORT),
 		(unsigned int)ntohs(us.SIN_PORT));
 
 #ifdef INET6
 	Debug((DEBUG_SEND, "sending [%s] to auth port %s.113",
-		authbuf, inet_ntop,(AF_INET6, (char *)&them.sin6_addr,
+		authbuf, inet_ntop(AF_INET6, (char *)&them.sin6_addr,
 				    mydummy, MYDUMMY_SIZE)));
 #else
 	Debug((DEBUG_SEND, "sending [%s] to auth port %s.113",
@@ -717,8 +728,7 @@ authsenderr:
  * The actual read processijng here is pretty weak - no handling of the reply
  * if it is fragmented by IP.
  */
-void	read_authports(cptr)
-Reg	aClient	*cptr;
+void	read_authports(aClient *cptr)
 {
 	Reg	char	*s, *t;
 	Reg	int	len;
@@ -785,7 +795,7 @@ Reg	aClient	*cptr;
 	ircstp->is_asuc++;
 	if (cptr->auth != cptr->username)/*impossible, but...*/
 	    {
-		istat.is_authmem -= sizeof(cptr->auth);
+		istat.is_authmem -= strlen(cptr->auth) + 1;
 		istat.is_auth -= 1;
 		MyFree(cptr->auth);
 	    }
@@ -802,3 +812,4 @@ Reg	aClient	*cptr;
 	Debug((DEBUG_INFO, "got username [%s]", ruser));
 	return;
 }
+

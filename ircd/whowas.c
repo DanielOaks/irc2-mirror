@@ -24,7 +24,7 @@
  */
 
 #ifndef lint
-static  char rcsid[] = "@(#)$Id: whowas.c,v 1.6 1999/06/27 19:08:46 kalt Exp $";
+static  char rcsid[] = "@(#)$Id: whowas.c,v 1.9 2003/10/18 15:31:27 q Exp $";
 #endif
 
 #include "os.h"
@@ -38,22 +38,27 @@ int	ww_index = 0, ww_size = MAXCONNECTIONS*2;
 static	aLock	*locked;
 int	lk_index = 0, lk_size = MAXCONNECTIONS*2;
 
-static	void	grow_history()
+static	void	grow_whowas(void)
 {
 	int	osize = ww_size;
 
-	Debug((DEBUG_ERROR, "Whowas/grow_history ww:%d, lk:%d, #%d, %#x/%#x",
+	Debug((DEBUG_ERROR, "grow_whowas ww:%d, lk:%d, #%d, %#x/%#x",
 			    ww_size, lk_size, numclients, was, locked));
 	ww_size = (int)((float)numclients * 1.1);
 	was = (aName *)MyRealloc((char *)was, sizeof(*was) * ww_size);
 	bzero((char *)(was + osize), sizeof(*was) * (ww_size - osize));
-	lk_size = (int)((float)numclients * 1.1);
-	locked = (aLock *)MyRealloc((char *)locked, sizeof(*locked) * lk_size);
-	bzero((char *)(locked + osize), sizeof(*locked) * (lk_size - osize));
-	Debug((DEBUG_ERROR, "Whowas/grow_history %#x/%#x", was, locked));
+	Debug((DEBUG_ERROR, "grow_whowas %#x", was));
 	ircd_writetune(tunefile);
 }
 
+static	void	grow_locked(void)
+{
+	int	osize = lk_size;
+
+	lk_size = ww_size;
+	locked = (aLock *)MyRealloc((char *)locked, sizeof(*locked) * lk_size);
+	bzero((char *)(locked + osize), sizeof(*locked) * (lk_size - osize));
+}
 
 /*
 ** add_history
@@ -63,8 +68,7 @@ static	void	grow_history()
 **	the user structure must have been allocated).
 **	if nodelay is NULL, then the nickname will be subject to NickDelay
 */
-void	add_history(cptr, nodelay)
-Reg	aClient	*cptr, *nodelay;
+void	add_history(aClient *cptr, aClient *nodelay)
 {
 	Reg	aName	*np;
 	Reg	Link	*uwas;
@@ -153,8 +157,12 @@ Reg	aClient	*cptr, *nodelay;
 			 ** This nickname has to be locked, thus copy it to the
 			 ** lock[] array.
 			 */
-			strncpyzt(locked[lk_index].nick, np->ww_nick, NICKLEN);
+			strcpy(locked[lk_index].nick, np->ww_nick);
 			locked[lk_index++].logout = np->ww_logout;
+			if ((lk_index == lk_size) && (lk_size != ww_size))
+			{
+				grow_locked();
+			}
 			if (lk_index >= lk_size)
 				lk_index = 0;
 		    }
@@ -189,7 +197,7 @@ Reg	aClient	*cptr, *nodelay;
 
 	ww_index++;
 	if ((ww_index == ww_size) && (numclients > ww_size))
-		grow_history();
+		grow_whowas();
 	if (ww_index >= ww_size)
 		ww_index = 0;
 	return;
@@ -201,40 +209,46 @@ Reg	aClient	*cptr, *nodelay;
 **      nickname within the timelimit. Returns NULL, if no
 **      one found...
 */
-aClient	*get_history(nick, timelimit)
-char	*nick;
-time_t	timelimit;
+aClient	*get_history(char *nick, time_t timelimit)
 {
 	Reg	aName	*wp, *wp2;
-	Reg	int	i = 0;
 
 	wp = wp2 = &was[ww_index];
 	timelimit = timeofday - timelimit;
 
-	do {
-		if (!mycmp(nick, wp->ww_nick) && wp->ww_logout >= timelimit)
-			break;
-		wp++;
-		if (wp == &was[ww_size])
-			i = 1, wp = was;
+	do
+	{
+		if (wp == was)
+		{
+			wp = was + ww_size;
+		}
+		wp--;
+		if (wp->ww_logout < timelimit)
+		{
+			/* no point in checking more, only old or unused 
+			 * entry's left. */
+			return NULL;
+		}
+		if (wp->ww_online == &me)
+		{
+			/* This one is offline */
+			continue;
+		}
+		if (wp->ww_online && !mycmp(nick, wp->ww_nick))
+		{
+			return wp->ww_online;
+		}
 	} while (wp != wp2);
 
-	if (wp != wp2 || !i)
-		if (wp->ww_online == &me)
-			return (NULL);
-		else
-			return (wp->ww_online);
 	return (NULL);
 }
 
 /*
 ** find_history
 **      Returns 1 if a user was using the given nickname within
-**   the timelimit. Returns 0, if none found...
+**   the timelimit and it's locked. Returns 0, if none found...
 */
-int	find_history(nick, timelimit)
-char  *nick;
-time_t        timelimit;
+int	find_history(char *nick, time_t timelimit)
 {
 	Reg     aName   *wp, *wp2;
 	Reg	aLock	*lp, *lp2;
@@ -247,29 +261,42 @@ time_t        timelimit;
 	timelimit = timeofday - timelimit;
 #endif
 	
-	do {
-		if (!mycmp(nick, wp->ww_nick) &&
-		    (wp->ww_logout >= timelimit) && (wp->ww_online == NULL))
-			break;
-		wp++;
-		if (wp == &was[ww_size])
-			i = 1, wp = was;
+	do
+	{
+		if (wp == was)
+		{
+			wp = was + ww_size;
+		}
+		wp--;
+		if (wp->ww_logout < timelimit)
+		{
+			return 0;
+		}
+		/* wp->ww_online == NULL means it's locked */
+		if ((!wp->ww_online) && (!mycmp(nick, wp->ww_nick)))
+		{
+			return 1;
+		}
 	} while (wp != wp2);
-	if ((wp != wp2 || !i) && (wp->ww_online == NULL))
-		return (1);
 
 	lp = lp2 = &locked[lk_index];
 	i = 0;
-	do {
-		if (!myncmp(nick, lp->nick, NICKLEN) &&
-		    (lp->logout >= timelimit))
-			break;
-		lp++;
-		if (lp == &locked[lk_size])
-			i = 1, lp = locked;
+	do
+	{
+		if (lp == locked)
+		{
+			lp = locked + lk_size;
+		}
+		lp--;
+		if (lp->logout < timelimit)
+		{
+			return 0;
+		}
+		if (!mycmp(nick, lp->nick))
+		{
+			return 1;
+		}
 	} while (lp != lp2);
-	if (lp != lp2 || !i)
-		return (1);
 
 	return (0);
 }
@@ -281,8 +308,7 @@ time_t        timelimit;
 **	structures and it must know when they cease to exist. This
 **	also implicitly calls AddHistory.
 */
-void	off_history(cptr)
-Reg	aClient	*cptr;
+void	off_history(aClient *cptr)
 {
 	Reg	Link	*uwas;
 
@@ -322,7 +348,7 @@ Reg	aClient	*cptr;
 	return;
 }
 
-void	initwhowas()
+void	initwhowas(void)
 {
 	Reg	int	i;
 
@@ -345,10 +371,7 @@ void	initwhowas()
 **	parv[0] = sender prefix
 **	parv[1] = nickname queried
 */
-int	m_whowas(cptr, sptr, parc, parv)
-aClient	*cptr, *sptr;
-int	parc;
-char	*parv[];
+int	m_whowas(aClient *cptr, aClient *sptr, int parc, char *parv[])
 {
 	Reg	aName	*wp, *wp2 = NULL;
 	Reg	int	j = 0;
@@ -358,7 +381,7 @@ char	*parv[];
 
  	if (parc < 2)
 	    {
-		sendto_one(sptr, err_str(ERR_NONICKNAMEGIVEN, parv[0]));
+		sendto_one(sptr, replies[ERR_NONICKNAMEGIVEN], ME, BadTo(parv[0]));
 		return 1;
 	    }
 	if (parc > 2)
@@ -373,43 +396,43 @@ char	*parv[];
 
 	for (s = parv[1]; (nick = strtoken(&p, s, ",")); s = NULL)
 	    {
-		wp = wp2 = &was[ww_index - 1];
+		wp = wp2 = &was[(ww_index ? ww_index : ww_size) - 1];
+		j = 0;
 
 		do {
-			if (wp < was)
-				wp = &was[ww_size - 1];
 			if (mycmp(nick, wp->ww_nick) == 0)
 			    {
 				up = wp->ww_user;
-				sendto_one(sptr, rpl_str(RPL_WHOWASUSER,
-					   parv[0]), wp->ww_nick, up->username,
+				sendto_one(sptr, replies[RPL_WHOWASUSER],
+					   ME, BadTo(parv[0]), wp->ww_nick, up->username,
 					   up->host, wp->ww_info);
-				sendto_one(sptr, rpl_str(RPL_WHOISSERVER,
-					   parv[0]), wp->ww_nick, up->server,
+				sendto_one(sptr, replies[RPL_WHOISSERVER],
+					   ME, BadTo(parv[0]), wp->ww_nick, up->server,
 					   myctime(wp->ww_logout));
-				if (up->away)
-					sendto_one(sptr, rpl_str(RPL_AWAY,
-						   parv[0]),
-						   wp->ww_nick, up->away);
 				j++;
 			    }
 			if (max > 0 && j >= max)
 				break;
-			wp--;
+			if (wp == was)
+				wp = &was[ww_size - 1];
+			else
+				wp--;
 		} while (wp != wp2);
 
 		if (up == NULL)
 		    {
-			if (strlen(parv[1]) > (size_t) NICKLEN)
-				parv[1][NICKLEN] = '\0';
-			sendto_one(sptr, err_str(ERR_WASNOSUCHNICK, parv[0]),
-				   parv[1]);
+			if (strlen(nick) > (size_t) NICKLEN)
+				nick[NICKLEN] = '\0';
+			sendto_one(sptr, replies[ERR_WASNOSUCHNICK], ME, BadTo(parv[0]),
+				   nick);
 		    }
+		else
+			up = NULL;
 
 		if (p)
 			p[-1] = ',';
 	    }
-	sendto_one(sptr, rpl_str(RPL_ENDOFWHOWAS, parv[0]), parv[1]);
+	sendto_one(sptr, replies[RPL_ENDOFWHOWAS], ME, BadTo(parv[0]), parv[1]);
 	return 2;
     }
 
@@ -417,9 +440,7 @@ char	*parv[];
 /*
 ** for debugging...counts related structures stored in whowas array.
 */
-void	count_whowas_memory(wwu, wwa, wwam, wwuw)
-int	*wwu, *wwa, *wwuw;
-u_long	*wwam;
+void	count_whowas_memory(int *wwu, int *wwa, u_long *wwam, int *wwuw)
 {
 	Reg	anUser	*tmp;
 	Reg	Link	*tmpl;
@@ -462,3 +483,4 @@ u_long	*wwam;
 
 	return;
 }
+

@@ -48,7 +48,7 @@
  */
 
 #ifndef lint
-static  char rcsid[] = "@(#)$Id: s_conf.c,v 1.42 1999/05/01 21:29:13 kalt Exp $";
+static  char rcsid[] = "@(#)$Id: s_conf.c,v 1.76 2004/02/13 01:43:00 chopin Exp $";
 #endif
 
 #include "os.h"
@@ -57,19 +57,100 @@ static  char rcsid[] = "@(#)$Id: s_conf.c,v 1.42 1999/05/01 21:29:13 kalt Exp $"
 #include "s_externs.h"
 #undef S_CONF_C
 
-static	int	check_time_interval __P((char *, char *));
-static	int	lookup_confhost __P((aConfItem *));
+#ifdef TIMEDKLINES
+static	int	check_time_interval (char *, char *);
+#endif
+static	int	lookup_confhost (aConfItem *);
 
 aConfItem	*conf = NULL;
 aConfItem	*kconf = NULL;
+char		*networkname = NULL;
+
+/* Parse I-lines flags from string.
+ * D - Restricted, if no DNS.
+ * I - Restricted, if no ident.
+ * R - Restricted.
+ * E - Kline exempt.
+ * N - Do not resolve hostnames (show as IP).
+ * F - Fallthrough to next I:line when password not matched
+ */
+long	iline_flags_parse(char *string)
+{
+	long tmp = 0;
+	
+	if (!string)
+	{
+		return 0;
+	}
+	
+	if (index(string,'D'))
+	{
+		tmp |= CFLAG_RNODNS;
+	}
+	if (index(string,'I'))
+	{
+		tmp |= CFLAG_RNOIDENT;
+	}
+	if (index(string,'R'))
+	{
+		tmp |= CFLAG_RESTRICTED;
+	}
+	if (index(string,'E'))
+	{
+		tmp |= CFLAG_KEXEMPT;
+	}
+	if (index(string,'N'))
+	{
+		tmp |= CFLAG_NORESOLVE;
+	}
+	if (index(string,'F'))
+	{
+		tmp |= CFLAG_FALL;
+	}
+
+	return tmp;
+}
+
+/* convert iline flags to human readable string */
+char	*iline_flags_to_string(long flags)
+{
+	static char ifsbuf[BUFSIZE];
+	char *s = ifsbuf;
+	
+	if (flags & CFLAG_RNODNS)
+	{
+		*s++ = 'D';
+	}
+	if (flags & CFLAG_RNOIDENT)
+	{
+		*s++ = 'I';
+	}
+	if (flags & CFLAG_RESTRICTED)
+	{
+		*s++ = 'R';
+	}
+	if (flags & CFLAG_KEXEMPT)
+	{
+		*s++ = 'E';
+	}
+	if (flags & CFLAG_NORESOLVE)
+	{
+		*s++ = 'N';
+	}
+	if (flags & CFLAG_FALL)
+	{
+		*s++ = 'F';
+	}
+	*s++ = '\0';
+	
+	return ifsbuf;
+}
 
 /*
  * remove all conf entries from the client except those which match
  * the status field mask.
  */
-void	det_confs_butmask(cptr, mask)
-aClient	*cptr;
-int	mask;
+void	det_confs_butmask(aClient *cptr, int mask)
 {
 	Reg	Link	*tmp, *tmp2;
 
@@ -83,39 +164,87 @@ int	mask;
 
 /*
  * Match address by #IP bitmask (10.11.12.128/27)
+ * Now should work for IPv6 too.
+ * returns -1 on error, 0 on match, 1 when NO match.
  */
-int    match_ipmask(mask, cptr)
-char   *mask;
-aClient *cptr;
+int    match_ipmask(char *mask, aClient *cptr, int maskwithusername)
 {
-        int i1, i2, i3, i4, m;
-        u_long lmask, baseip;
-	char *at;
- 
-	if (at = index(mask, '@'))
-		mask = at + 1;
-        if (sscanf(mask, "%d.%d.%d.%d/%d", &i1, &i2, &i3, &i4, &m) != 5 ||
-           m < 1 || m > 31) {
-               sendto_flag(SCH_LOCAL, "Ignoring bad mask: %s", mask);
-                return -1;
-        }
-        lmask = htonl((u_long)0xffffffffL << (32 - m)); /* /24->0xffffff00ul */
-        baseip = htonl(i1 * 0x1000000 + i2 * 0x10000 + i3 * 0x100 + i4);
-#ifdef INET6
-	return 1;
-/*        return ((cptr->ip.s6_addr & lmask) == baseip) ? 0 : 1;*/
-#else
-        return ((cptr->ip.s_addr & lmask) == baseip) ? 0 : 1;
+	int	m;
+	char	*p;
+	struct  IN_ADDR addr;
+	char	dummy[128];
+	u_long	lmask;
+#ifdef	INET6
+	int	j;
 #endif
+ 
+	strncpyzt(dummy, mask, sizeof(dummy));
+	mask = dummy;
+	if (maskwithusername && (p = index(mask, '@')))
+	{
+		*p = '\0';
+		if (match(mask, cptr->username))
+			return 1;
+		mask = p + 1;
+	}
+	if (!(p = index(mask, '/')))
+		goto badmask;
+	*p = '\0';
+	
+	if (sscanf(p + 1, "%d", &m) != 1)
+	{
+		goto badmask;
+	}
+	if (!m)
+		return 0;       /* x.x.x.x/0 always matches */
+#ifndef	INET6
+	if (m < 0 || m > 32)
+		goto badmask;
+	lmask = htonl((u_long)0xffffffffL << (32 - m));
+	addr.s_addr = inetaddr(mask);
+	return ((addr.s_addr ^ cptr->ip.s_addr) & lmask) ? 1 : 0;
+#else
+	if (m < 0 || m > 128)
+		goto badmask;
+
+	if (inetpton(AF_INET6, mask, (void *)addr.s6_addr) != 1)
+	{
+		return -1;
+	}
+
+	/* Make sure that the ipv4 notation still works. */
+	if (IN6_IS_ADDR_V4MAPPED(&addr) && m < 96)
+	{
+		m += 96;
+	}
+
+	j = m & 0x1F;	/* number not mutliple of 32 bits */
+	m >>= 5;	/* number of 32 bits */
+
+	if (m && memcmp((void *)(addr.s6_addr), 
+		(void *)(cptr->ip.s6_addr), m << 2))
+		return 1;
+
+	if (j)
+	{
+		lmask = htonl((u_long)0xffffffffL << (32 - j));
+		if ((((u_int32_t *)(addr.s6_addr))[m] ^
+			((u_int32_t *)(cptr->ip.s6_addr))[m]) & lmask)
+			return 1;
+	}
+
+	return 0;
+#endif
+badmask:
+	if (maskwithusername)
+	sendto_flag(SCH_ERROR, "Ignoring bad mask: %s", mask);
+	return -1;
 }
 
 /*
  * find the first (best) I line to attach.
  */
-int	attach_Iline(cptr, hp, sockhost)
-aClient *cptr;
-Reg	struct	hostent	*hp;
-char	*sockhost;
+int	attach_Iline(aClient *cptr, struct hostent *hp, char *sockhost)
 {
 	Reg	aConfItem	*aconf;
 	Reg	char	*hname;
@@ -165,7 +294,7 @@ char	*sockhost;
 		(void)strncat(uhost, sockhost, sizeof(uhost) - strlen(uhost));
 		if (strchr(aconf->host, '/'))		/* 1.2.3.0/24 */
 		    {
-			if (match_ipmask(aconf->host, cptr))
+			if (match_ipmask(aconf->host, cptr, 1))
 				continue;
                 } else if (match(aconf->host, uhost))	/* 1.2.3.* */
 			continue;
@@ -175,8 +304,44 @@ char	*sockhost;
 			add_local_domain(uhost, sizeof(uhost) - strlen(uhost));
 		    }
 attach_iline:
+		if (!BadPtr(aconf->passwd) &&
+			!StrEq(cptr->passwd, aconf->passwd))
+		{
+			if (IsConfFallThrough(aconf))
+			{
+				continue;
+			}
+			else
+			{
+				sendto_one(cptr, replies[ERR_PASSWDMISMATCH],
+					ME, BadTo(cptr->name));
+				return -8;
+			}
+		}
+
 		if (aconf->status & CONF_RCLIENT)
+		{
 			SetRestricted(cptr);
+		}
+		
+		if (IsConfRestricted(aconf))
+		{
+			SetRestricted(cptr);
+		}
+		
+		if (!hp && IsConfRNoDNS(aconf))
+		{
+			SetRestricted(cptr);
+		}
+		
+		if (IsConfKlineExempt(aconf))
+		{
+			SetKlineExempt(cptr);
+		}
+		if (!(cptr->flags & FLAGS_GOTID) && IsConfRNoIdent(aconf))
+		{
+			SetRestricted(cptr);
+		}
 		get_sockhost(cptr, uhost);
 		if ((i = attach_conf(cptr, aconf)) < -1)
 			find_bounce(cptr, ConfClass(aconf), -1);
@@ -190,8 +355,7 @@ attach_iline:
  * Find the single N line and return pointer to it (from list).
  * If more than one then return NULL pointer.
  */
-aConfItem	*count_cnlines(lp)
-Reg	Link	*lp;
+aConfItem	*count_cnlines(Link *lp)
 {
 	Reg	aConfItem	*aconf, *cline = NULL, *nline = NULL;
 
@@ -214,11 +378,10 @@ Reg	Link	*lp;
 **	Disassociate configuration from the client.
 **      Also removes a class from the list if marked for deleting.
 */
-int	detach_conf(cptr, aconf)
-aClient *cptr;
-aConfItem *aconf;
+int	detach_conf(aClient *cptr, aConfItem *aconf)
 {
 	Reg	Link	**lp, *tmp;
+	aConfItem **aconf2,*aconf3;
 
 	lp = &(cptr->confs);
 
@@ -239,7 +402,22 @@ aConfItem *aconf;
 				    }
 			     }
 			if (aconf && !--aconf->clients && IsIllegal(aconf))
-				free_conf(aconf);
+			{
+				/* Remove the conf entry from the Conf linked list */
+				for (aconf2 = &conf; (aconf3 = *aconf2); )
+				{
+					if (aconf3 == aconf)
+					{
+						*aconf2 = aconf3->next;
+						aconf3->next = NULL;
+						free_conf(aconf);
+					}
+					else
+					{
+						aconf2 = &aconf3->next;
+					}
+				}
+			}
 			tmp = *lp;
 			*lp = tmp->next;
 			free_link(tmp);
@@ -252,9 +430,7 @@ aConfItem *aconf;
 	return -1;
 }
 
-static	int	is_attached(aconf, cptr)
-aConfItem *aconf;
-aClient *cptr;
+static	int	is_attached(aConfItem *aconf, aClient *cptr)
 {
 	Reg	Link	*lp;
 
@@ -272,9 +448,7 @@ aClient *cptr;
 **	connection). Note, that this automaticly changes the
 **	attachment if there was an old one...
 */
-int	attach_conf(cptr, aconf)
-aConfItem *aconf;
-aClient *cptr;
+int	attach_conf(aClient *cptr, aConfItem *aconf)
 {
 	Reg	Link	*lp;
 
@@ -289,10 +463,12 @@ aClient *cptr;
 		    ConfMaxLinks(aconf) > 0)
 			return -3;    /* Use this for printing error message */
 	    }
-	if ((aconf->status & (CONF_CLIENT | CONF_RCLIENT)))
-	    {
-		int	hcnt = 0, ucnt = 0;
 
+	if ((aconf->status & (CONF_CLIENT | CONF_RCLIENT)))
+	{
+		int hcnt = 0, ucnt = 0;
+		int ghcnt = 0, gucnt = 0;
+		anUser *user = NULL;
 		/* check on local/global limits per host and per user@host */
 
 		/*
@@ -300,60 +476,60 @@ aClient *cptr;
 		**	host check is done on the IP address.
 		**	user check is done on the IDENT reply.
 		*/
-		if (ConfMaxHLocal(aconf) > 0 || ConfMaxUHLocal(aconf) > 0) {
-			Reg     aClient *acptr;
-			Reg     int     i;
-
-			for (i = highest_fd; i >= 0; i--)
-				if ((acptr = local[i]) && (cptr != acptr) &&
-				    !IsListening(acptr) &&
-				    !bcmp((char *)&cptr->ip,(char *)&acptr->ip,
-					  sizeof(cptr->ip)))
-				    {
-					hcnt++;
-					if (!strncasecmp(acptr->auth,
-							 cptr->auth, USERLEN))
-						ucnt++;
-				    }
-			if (ConfMaxHLocal(aconf) > 0 &&
-			    hcnt >= ConfMaxHLocal(aconf))
-				return -4;	/* for error message */
-			if (ConfMaxUHLocal(aconf) > 0 &&
-			    ucnt >= ConfMaxUHLocal(aconf))
-				return -5;      /* for error message */
-		}
-		/*
-		** Global limits
-		**	host check is done on the hostname (IP if unresolved)
-		**	user check is done on username
-		*/
-		if (ConfMaxHGlobal(aconf) > 0 || ConfMaxUHGlobal(aconf) > 0)
-		    {
-			Reg     aClient *acptr;
-			Reg     int     ghcnt = hcnt, gucnt = ucnt;
-
-			for (acptr = client; acptr; acptr = acptr->next)
-			    {
-				if (!IsPerson(acptr))
-					continue;
-				if (MyConnect(acptr) &&
-				    (ConfMaxHLocal(aconf) > 0 ||
-				     ConfMaxUHLocal(aconf) > 0))
-					continue;
-				if (!strcmp(cptr->sockhost, acptr->user->host))
-				    {
-					if (ConfMaxHGlobal(aconf) > 0 &&
-					    ++ghcnt >= ConfMaxHGlobal(aconf))
-						return -6;
+		if (ConfMaxHLocal(aconf) > 0 || ConfMaxUHLocal(aconf) > 0 ||
+		    ConfMaxHGlobal(aconf) > 0 || ConfMaxUHGlobal(aconf) > 0 )
+		{
+			for ((user = hash_find_hostname(cptr->sockhost, NULL));
+			     user; user = user->hhnext)
+			{
+				if (!mycmp(cptr->sockhost, user->host))
+				{
+					ghcnt++;
+					if (MyConnect(user->bcptr))
+					{
+						hcnt++;
+						if (!mycmp(user->bcptr->auth,
+							   cptr->auth))
+						{
+							ucnt++;
+							gucnt++;
+						}
+					}
+					else
+					{
+						if (!mycmp(user->username,
+							   cptr->user->username
+							   ))
+						{
+							gucnt++;
+						}
+					}
+					if (ConfMaxUHLocal(aconf) > 0 &&
+					    ucnt >= ConfMaxUHLocal(aconf))
+					{
+						return -5;
+					}
+	
+					if (ConfMaxHLocal(aconf) > 0 &&
+					    hcnt >= ConfMaxHLocal(aconf))
+					{
+						return -4;
+					}
 					if (ConfMaxUHGlobal(aconf) > 0 &&
-					    !strcmp(cptr->user->username,
-						    acptr->user->username) &&
-					    (++gucnt >=ConfMaxUHGlobal(aconf)))
+					    gucnt >= ConfMaxUHGlobal(aconf))
+					{
 						return -7;
-				    }
-			    }
-		    }
-	    }
+					}
+					if (ConfMaxHGlobal(aconf) > 0 &&
+					     ghcnt >= ConfMaxHGlobal(aconf))
+					{
+						return -6;
+					}
+				}
+			}
+		}
+	}
+
 
 	lp = make_link();
 	istat.is_conflink++;
@@ -367,8 +543,8 @@ aClient *cptr;
 }
 
 
-aConfItem *find_admin()
-    {
+aConfItem	*find_admin(void)
+{
 	Reg	aConfItem	*aconf;
 
 	for (aconf = conf; aconf; aconf = aconf->next)
@@ -376,17 +552,17 @@ aConfItem *find_admin()
 			break;
 	
 	return (aconf);
-    }
+}
 
-aConfItem *find_me()
-    {
+aConfItem	*find_me(void)
+{
 	Reg	aConfItem	*aconf;
 	for (aconf = conf; aconf; aconf = aconf->next)
 		if (aconf->status & CONF_ME)
 			break;
 	
 	return (aconf);
-    }
+}
 
 /*
  * attach_confs
@@ -394,10 +570,7 @@ aConfItem *find_me()
  * the conf file (for non-C/N lines) or is an exact match (C/N lines
  * only).  The difference in behaviour is to stop C:*::* and N:*::*.
  */
-aConfItem *attach_confs(cptr, name, statmask)
-aClient	*cptr;
-char	*name;
-int	statmask;
+aConfItem	*attach_confs(aClient *cptr, char *name, int statmask)
 {
 	Reg	aConfItem	*tmp;
 	aConfItem	*first = NULL;
@@ -428,10 +601,7 @@ int	statmask;
 /*
  * Added for new access check    meLazy
  */
-aConfItem *attach_confs_host(cptr, host, statmask)
-aClient *cptr;
-char	*host;
-int	statmask;
+aConfItem	*attach_confs_host(aClient *cptr, char *host, int statmask)
 {
 	Reg	aConfItem *tmp;
 	aConfItem *first = NULL;
@@ -463,14 +633,13 @@ int	statmask;
 /*
  * find a conf entry which matches the hostname and has the same name.
  */
-aConfItem *find_conf_exact(name, user, host, statmask)
-char	*name, *host, *user;
-int	statmask;
+aConfItem	*find_conf_exact(char *name, char *user, char *host, 
+		int statmask)
 {
 	Reg	aConfItem *tmp;
 	char	userhost[USERLEN+HOSTLEN+3];
 
-	SPRINTF(userhost, "%s@%s", user, host);
+	sprintf(userhost, "%s@%s", user, host);
 
 	for (tmp = conf; tmp; tmp = tmp->next)
 	    {
@@ -497,9 +666,47 @@ int	statmask;
 	return NULL;
 }
 
-aConfItem *find_conf_name(name, statmask)
-char	*name;
-int	statmask;
+/*
+ * find an O-line which matches the hostname and has the same "name".
+ */
+aConfItem	*find_Oline(char *name, aClient *cptr)
+{
+	Reg	aConfItem *tmp;
+	char	userhost[USERLEN+HOSTLEN+3];
+	char	userip[USERLEN+HOSTLEN+3];
+
+	sprintf(userhost, "%s@%s", cptr->username, cptr->sockhost);
+	sprintf(userip, "%s@%s", cptr->username, 
+#ifdef INET6
+		(char *)inetntop(AF_INET6, (char *)&cptr->ip, mydummy,
+			MYDUMMY_SIZE)
+#else
+		(char *)inetntoa((char *)&cptr->ip)
+#endif
+	);
+
+
+	for (tmp = conf; tmp; tmp = tmp->next)
+	    {
+		if (!(tmp->status & (CONF_OPS)) || !tmp->name || !tmp->host ||
+			mycmp(tmp->name, name))
+			continue;
+		/*
+		** Accept if the *real* hostname matches the host field or
+		** the ip does.
+		*/
+		if (match(tmp->host, userhost) && match(tmp->host, userip) &&
+			(!strchr(tmp->host, '/') 
+			|| match_ipmask(tmp->host, cptr, 1)))
+			continue;
+		if (tmp->clients < MaxLinks(Class(tmp)))
+			return tmp;
+	    }
+	return NULL;
+}
+
+
+aConfItem	*find_conf_name(char *name, int statmask)
 {
 	Reg	aConfItem *tmp;
  
@@ -516,10 +723,7 @@ int	statmask;
 	return NULL;
 }
 
-aConfItem *find_conf(lp, name, statmask)
-char	*name;
-Link	*lp;
-int	statmask;
+aConfItem	*find_conf(Link *lp, char *name, int statmask)
 {
 	Reg	aConfItem *tmp;
 	int	namelen = name ? strlen(name) : 0;
@@ -543,10 +747,7 @@ int	statmask;
 /*
  * Added for new access check    meLazy
  */
-aConfItem *find_conf_host(lp, host, statmask)
-Reg	Link	*lp;
-char	*host;
-Reg	int	statmask;
+aConfItem	*find_conf_host(Link *lp, char *host, int statmask)
 {
 	Reg	aConfItem *tmp;
 	int	hostlen = host ? strlen(host) : 0;
@@ -564,16 +765,35 @@ Reg	int	statmask;
 	return NULL;
 }
 
+aConfItem	*find_conf_host_sid(Link *lp, char *host, char *sid, int statmask)
+{
+	Reg	aConfItem *tmp;
+	int	hostlen = host ? strlen(host) : 0;
+  
+	if (hostlen > HOSTLEN || BadPtr(host))
+		return (aConfItem *)NULL;
+	for (; lp; lp = lp->next)
+	    {
+		tmp = lp->value.aconf;
+		if (tmp->status & statmask &&
+		    (!(tmp->status & CONF_SERVER_MASK || tmp->host) ||
+	 	     (tmp->host && !match(tmp->host, host))) &&
+			(!tmp->passwd || !tmp->passwd[0] ||
+				!match(tmp->passwd, sid)) )
+		{
+			return tmp;
+		}
+	    }
+	return NULL;
+}
+
 /*
  * find_conf_ip
  *
  * Find a conf line using the IP# stored in it to search upon.
  * Added 1/8/92 by Avalon.
  */
-aConfItem *find_conf_ip(lp, ip, user, statmask)
-char	*ip, *user;
-Link	*lp;
-int	statmask;
+aConfItem	*find_conf_ip(Link *lp, char *ip, char *user, int statmask)
 {
 	Reg	aConfItem *tmp;
 	Reg	char	*s;
@@ -602,9 +822,7 @@ int	statmask;
  *
  * - looks for a match on all given fields.
  */
-aConfItem *find_conf_entry(aconf, mask)
-aConfItem *aconf;
-u_int	mask;
+aConfItem	*find_conf_entry(aConfItem *aconf, u_int mask)
 {
 	Reg	aConfItem *bconf;
 
@@ -643,9 +861,7 @@ u_int	mask;
  * as a result of an operator issuing this command, else assume it has been
  * called as a result of the server receiving a HUP signal.
  */
-int	rehash(cptr, sptr, sig)
-aClient	*cptr, *sptr;
-int	sig;
+int	rehash(aClient *cptr, aClient *sptr, int sig)
 {
 	Reg	aConfItem **tmp = &conf, *tmp2 = NULL;
 	Reg	aClass	*cltmp;
@@ -657,6 +873,8 @@ int	sig;
 	    {
 		sendto_flag(SCH_NOTICE,
 			    "Got signal SIGHUP, reloading ircd.conf file");
+		logfiles_close();
+		logfiles_open();
 #ifdef	ULTRIX
 		if (fork() > 0)
 			exit(0);
@@ -674,18 +892,6 @@ int	sig;
 			 * this....-avalon
 			 */
 			acptr->hostp = NULL;
-#if defined(R_LINES_REHASH) && !defined(R_LINES_OFTEN)
-			if (find_restrict(acptr))
-			    {
-				sendto_flag(SCH_NOTICE,
-					    "Restricting %s, closing lp",
-					    get_client_name(acptr,FALSE));
-				acptr->exitc = EXITC_RLINE;
-				if (exit_client(cptr,acptr,&me,"R-lined") ==
-				    FLUSH_BUFFER)
-					ret = FLUSH_BUFFER;
-			    }
-#endif
 		    }
 
 	while ((tmp2 = *tmp))
@@ -697,7 +903,7 @@ int	sig;
 			** that it will be deleted when the last client
 			** exits...
 			*/
-			if (!(tmp2->status & (CONF_LISTEN_PORT|CONF_CLIENT)))
+			if (!(tmp2->status & (CONF_LISTEN_PORT|CONF_CLIENT|CONF_RCLIENT)))
 			    {
 				*tmp = tmp2->next;
 				tmp2->next = NULL;
@@ -726,28 +932,37 @@ int	sig;
 	for (cltmp = NextClass(FirstClass()); cltmp; cltmp = NextClass(cltmp))
 		MaxLinks(cltmp) = -1;
 
-	if (sig != 2)
+	if (sig == 2)
 		flush_cache();
 	(void) initconf(0);
 	close_listeners();
 
 	/*
-	 * flush out deleted I and P lines although still in use.
+	 * Flush *unused* config entries.
 	 */
 	for (tmp = &conf; (tmp2 = *tmp); )
-		if (!(tmp2->status & CONF_ILLEGAL))
+		if (!(tmp2->status & CONF_ILLEGAL) || tmp2->clients)
 			tmp = &tmp2->next;
 		else
-		    {
+		{
 			*tmp = tmp2->next;
 			tmp2->next = NULL;
-			if (!tmp2->clients)
-				free_conf(tmp2);
-		    }
+			free_conf(tmp2);
+		}
+	
 #ifdef CACHED_MOTD
 	read_motd(IRCDMOTD_PATH);
 #endif
-	rehashed = 1;
+	if (rehashed == 1)
+	{
+		/* queue another rehash for later */
+		rehashed = 2;
+	}
+	else if (rehashed == 0)
+	{
+		rehashed = 1;
+	}
+	mysrand(timeofday);
 	return ret;
 }
 
@@ -758,8 +973,9 @@ int	sig;
  * configuration file from.  This may either be the file direct or one end
  * of a pipe from m4.
  */
-int	openconf()
+int	openconf(void)
 {
+	int ret;
 #ifdef	M4_PREPROC
 	int	pi[2], i;
 
@@ -768,6 +984,12 @@ int	openconf()
 	switch(vfork())
 	{
 	case -1 :
+		if (serverbooting)
+		{
+			fprintf(stderr,
+			"Fatal Error: Unable to fork() m4 (%s)",
+			strerror(errno));
+		}
 		return -1;
 	case 0 :
 		(void)close(pi[0]);
@@ -776,7 +998,12 @@ int	openconf()
 			(void)dup2(pi[1], 1);
 			(void)close(pi[1]);
 		    }
-		(void)dup2(1,2);
+		/* If the server is booting, stderr is still open and
+		 * user should receive error message */
+		if (!serverbooting)
+		{
+			(void)dup2(1,2);
+		}
 		for (i = 3; i < MAXCONNECTIONS; i++)
 			if (local[i])
 				(void) close(i);
@@ -786,6 +1013,11 @@ int	openconf()
 		 * two servers running with the same fd's >:-) -avalon
 		 */
 		(void)execlp("m4", "m4", IRCDM4_PATH, configfile, 0);
+		if (serverbooting)
+		{
+			fprintf(stderr,"Fatal Error: Error executing m4 (%s)",
+				strerror(errno));
+		}
 		report_error("Error executing m4 %s:%s", &me);
 		_exit(-1);
 	default :
@@ -793,9 +1025,80 @@ int	openconf()
 		return pi[0];
 	}
 #else
-	return open(configfile, O_RDONLY);
+	if ((ret = open(configfile, O_RDONLY)) == - 1)
+	{
+		if (serverbooting)
+		{
+			fprintf(stderr,
+			"Fatal Error: Can not open configuration file %s (%s)",
+			configfile,strerror(errno));
+		}
+	}
+	return ret;
 #endif
 }
+
+/*
+** char *ipv6_convert(char *orig)
+** converts the original ip address to an standard form
+** returns a pointer to a string.
+*/
+
+#ifdef	INET6
+char	*ipv6_convert(char *orig)
+{
+	char	*s, *t, *buf = NULL;
+	int	i, j;
+	int	len = 1;	/* for the '\0' in case of no @ */
+	struct	in6_addr addr;
+	char	dummy[MYDUMMY_SIZE];
+
+	if ((s = strchr(orig, '@')))
+	    {
+		*s = '\0';
+		len = strlen(orig) + 2;	/* +2 for '@' and '\0' */
+		buf = (char *)MyMalloc(len);
+		(void *)strcpy(buf, orig);
+		buf[len - 2] = '@';
+		buf[len - 1] = '\0'; 
+		*s = '@';
+		orig = s + 1;
+	    }
+
+	if ((s = strchr(orig, '/')))
+	    {
+		*s = '\0';
+		s++;
+	    }
+
+	i = inetpton(AF_INET6, orig, addr.s6_addr);
+
+	if (i > 0)
+	    {
+		t = inetntop(AF_INET6, addr.s6_addr, dummy, MYDUMMY_SIZE);
+	    }
+	
+	j = len - 1;
+	if (!((i > 0) && t))
+		t = orig;
+
+	len += strlen(t);
+	buf = (char *)MyRealloc(buf, len);
+	strcpy(buf + j, t);
+
+	if (s)
+	    {
+		*(s-1) = '/'; /* put the '/' back, not sure it's needed tho */ 
+		j = len;
+		len += strlen(s) + 1;
+		buf = (char *)MyRealloc(buf, len);
+		buf[j - 1] = '/';
+		strcpy(buf + j, s);
+	    }
+
+	return buf;
+}
+#endif
 
 /*
 ** initconf() 
@@ -807,8 +1110,7 @@ int	openconf()
 
 #define MAXCONFLINKS 150
 
-int 	initconf(opt)
-int	opt;
+int 	initconf(int opt)
 {
 	static	char	quotes[9][2] = {{'b', '\b'}, {'f', '\f'}, {'n', '\n'},
 					{'r', '\r'}, {'t', '\t'}, {'v', '\v'},
@@ -943,11 +1245,11 @@ int	opt;
 				++ncount;
 				aconf->status = CONF_NOCONNECT_SERVER;
 				break;
-			case 'O':
+			case 'o':
 				aconf->status = CONF_OPERATOR;
 				break;
 			/* Local Operator, (limited privs --SRB) */
-			case 'o':
+			case 'O':
 				aconf->status = CONF_LOCOP;
 				break;
 			case 'P': /* listen port line */
@@ -958,23 +1260,10 @@ int	opt;
 			case 'q': /* network. USE WITH CAUTION! */
 				aconf->status = CONF_QUARANTINED_SERVER;
 				break;
-#ifdef R_LINES
-			case 'R': /* extended K line */
-			case 'r': /* Offers more options of how to restrict */
-				aconf->status = CONF_RESTRICT;
-				break;
-#endif
 			case 'S': /* Service. Same semantics as   */
 			case 's': /* CONF_OPERATOR                */
 				aconf->status = CONF_SERVICE;
 				break;
-#if 0
-			case 'U': /* Uphost, ie. host where client reading */
-			case 'u': /* this should connect.                  */
-			/* This is for client only, I must ignore this */
-			/* ...U-line should be removed... --msa */
-				break;
-#endif
 			case 'V': /* Server link version requirements */
 				aconf->status = CONF_VER;
 				break;
@@ -993,7 +1282,19 @@ int	opt;
 		    {
 			if ((tmp = getfield(NULL)) == NULL)
 				break;
+#ifdef	INET6
+			if (aconf->status & 
+				(CONF_CONNECT_SERVER|CONF_ZCONNECT_SERVER
+				|CONF_CLIENT|CONF_RCLIENT|CONF_KILL
+				|CONF_OTHERKILL|CONF_NOCONNECT_SERVER
+				|CONF_OPERATOR|CONF_LOCOP|CONF_LISTEN_PORT
+				|CONF_SERVICE))
+				aconf->host = ipv6_convert(tmp);
+			else
+				DupString(aconf->host, tmp);
+#else
 			DupString(aconf->host, tmp);
+#endif
 			if ((tmp = getfield(NULL)) == NULL)
 				break;
 			DupString(aconf->passwd, tmp);
@@ -1033,32 +1334,24 @@ int	opt;
                 ** for it and make the conf_line illegal and delete it.
                 */
 		if (aconf->status & CONF_CLASS)
-		    {
+		{
 			if (atoi(aconf->host) >= 0)
 				add_class(atoi(aconf->host),
 					  atoi(aconf->passwd),
 					  atoi(aconf->name), aconf->port,
 					  tmp ? atoi(tmp) : 0,
-/*					  tmp3 ? atoi(tmp3) : 0,
-**					  tmp3 && index(tmp3, '.') ?
-**					  atoi(index(tmp3, '.') + 1) : 0,
-** the next 3 lines should be replaced by the previous sometime in the
-** future.  It is only kept for "backward" compatibility and not needed,
-** but I'm in good mood today -krys
-*/
-					  tmp3 ? atoi(tmp3) : (atoi(aconf->name) > 0) ? atoi(aconf->name) : 0,
-					  tmp3 && index(tmp3, '.') ?
-					  atoi(index(tmp3, '.') + 1) : (atoi(aconf->name) < 0) ? -1 * atoi(aconf->name) : 0,
-/* end of backward compatibility insanity */
- 					  tmp4 ? atoi(tmp4) : 0,
-					  tmp4 && index(tmp4, '.') ?
-					  atoi(index(tmp4, '.') + 1) : 0);
+					  tmp3 ? atoi(tmp3) : 1,
+					  (tmp3 && index(tmp3, '.')) ?
+					  atoi(index(tmp3, '.') + 1) : 1,
+ 					  tmp4 ? atoi(tmp4) : 1,
+					  (tmp4 && index(tmp4, '.')) ?
+					  atoi(index(tmp4, '.') + 1) : 1);
 			continue;
-		    }
+		}
 		/*
-                ** associate each conf line with a class by using a pointer
-                ** to the correct class record. -avalon
-                */
+		** associate each conf line with a class by using a pointer
+		** to the correct class record. -avalon
+		*/
 		if (aconf->status & (CONF_CLIENT_MASK|CONF_LISTEN_PORT))
 		    {
 			if (Class(aconf) == 0)
@@ -1066,10 +1359,9 @@ int	opt;
 			if (MaxLinks(Class(aconf)) < 0)
 				Class(aconf) = find_class(0);
 		    }
-		if (aconf->status & (CONF_LISTEN_PORT|CONF_CLIENT))
+		if (aconf->status & (CONF_LISTEN_PORT|CONF_CLIENT|CONF_RCLIENT))
 		    {
 			aConfItem *bconf;
-
 			if ((bconf = find_conf_entry(aconf, aconf->status)))
 			    {
 				delist_conf(bconf);
@@ -1087,6 +1379,19 @@ int	opt;
 				 aconf->status == CONF_LISTEN_PORT)
 				(void)add_listener(aconf);
 		    }
+		if ((aconf->status & (CONF_CLIENT|CONF_RCLIENT)))
+		{
+			/* Parse I-line flags */
+			if (tmp3)
+			{
+				aconf->flags = iline_flags_parse(tmp3);
+			}
+			else
+			{
+				aconf->flags = 0L;
+			}
+		}
+		
 		if (aconf->status & CONF_SERVICE)
 			aconf->port &= SERVICE_MASK_ALL;
 		if (aconf->status & (CONF_SERVER_MASK|CONF_SERVICE))
@@ -1104,7 +1409,7 @@ int	opt;
 
 				len += strlen(aconf->host);
 				newhost = (char *)MyMalloc(len);
-				SPRINTF(newhost, "*@%s", aconf->host);
+				sprintf(newhost, "*@%s", aconf->host);
 				MyFree(aconf->host);
 				aconf->host = newhost;
 				istat.is_confmem += 2;
@@ -1130,6 +1435,10 @@ int	opt;
 				MyFree(tmp2);
 				tmp2 = NULL;
 			    }
+			if (tmp3)
+			{
+				DupString(aconf->source_ip, tmp3);
+			}
 				
 		    }
 		/*
@@ -1149,9 +1458,25 @@ int	opt;
 			if (ME[0] == '\0' && aconf->host[0])
 				strncpyzt(ME, aconf->host,
 					  sizeof(ME));
+			if (me.serv->sid[0] == '\0' && tmp && *tmp)
+				strncpyzt(me.serv->sid, tmp,
+					sizeof(me.serv->sid));
+						
 			if (aconf->port)
 				setup_ping(aconf);
 		    }
+		
+		if (aconf->status == CONF_ADMIN)
+		{
+			if (!networkname && tmp && *tmp)
+			{
+				if (strlen(tmp) < HOSTLEN)
+				{
+					DupString(networkname,tmp);
+				}
+			}
+		}
+		
 		(void)collapse(aconf->host);
 		(void)collapse(aconf->name);
 		Debug((DEBUG_NOTICE,
@@ -1189,8 +1514,7 @@ int	opt;
  *   Do (start) DNS lookups of all hostnames in the conf line and convert
  * an IP addresses in a.b.c.d number for to IP#s.
  */
-static	int	lookup_confhost(aconf)
-Reg	aConfItem	*aconf;
+static	int	lookup_confhost(aConfItem *aconf)
 {
 	Reg	char	*s;
 	Reg	struct	hostent *hp;
@@ -1216,24 +1540,30 @@ Reg	aConfItem	*aconf;
 	ln.value.aconf = aconf;
 	ln.flags = ASYNC_CONF;
 
-	if (isdigit(*s))
 #ifdef INET6
-		if(!inet_pton(AF_INET6, s, aconf->ipnum.s6_addr))
-			bcopy(minus_one, aconf->ipnum.s6_addr, IN6ADDRSZ);
+	if(inetpton(AF_INET6, s, aconf->ipnum.s6_addr))
+		;
 #else
+	if (isdigit(*s))
 		aconf->ipnum.s_addr = inetaddr(s);
 #endif
 	else if ((hp = gethost_byname(s, &ln)))
 		bcopy(hp->h_addr, (char *)&(aconf->ipnum),
 			sizeof(struct IN_ADDR));
+#ifdef	INET6
+	else
+	{
+		bcopy(minus_one, aconf->ipnum.s6_addr, IN6ADDRSZ);
+		goto badlookup;
+	}
 
-#ifdef INET6
-	if (AND16(aconf->ipnum.s6_addr) == 255)
 #else
 	if (aconf->ipnum.s_addr == -1)
-#endif
 		goto badlookup;
+#endif
+
 	return 0;
+
 badlookup:
 #ifdef INET6
 	if (AND16(aconf->ipnum.s6_addr) == 255)
@@ -1246,18 +1576,22 @@ badlookup:
 	return -1;
 }
 
-int	find_kill(cptr, doall, comment)
-aClient	*cptr;
-int	doall;
-char	**comment;
+int	find_kill(aClient *cptr, int timedklines, char **comment)
 {
+#ifdef TIMEDKLINES
 	static char	reply[256];
-	char *host, *ip, *name, *ident, *check;
-	aConfItem *tmp;
-	int	now;
+#endif
+	char		*host, *ip, *name, *ident, *check;
+	aConfItem	*tmp;
+	int		now = 0;
 
 	if (!cptr->user)
 		return 0;
+	
+	if (IsKlineExempt(cptr))
+	{
+		return 0;
+	}
 
 	host = cptr->sockhost;
 #ifdef INET6
@@ -1269,18 +1603,31 @@ char	**comment;
 	if (!strcmp(host, ip))
 		ip = NULL; /* we don't have a name for the ip# */
 	name = cptr->user->username;
+	if (IsRestricted(cptr) && name[0] == '+')
+	{
+		/*
+		** since we added '+' at the begining of valid
+		** ident response, remove it here for kline
+		** comparison --Beeth
+		*/
+		name++;
+	}
 	ident = cptr->auth;
 
 	if (strlen(host)  > (size_t) HOSTLEN ||
             (name ? strlen(name) : 0) > (size_t) HOSTLEN)
 		return (0);
 
+#ifdef TIMEDKLINES
 	*reply = '\0';
+#endif
 
 	for (tmp = kconf; tmp; tmp = tmp->next)
-	    {
-		if (!doall && (BadPtr(tmp->passwd) || !isdigit(*tmp->passwd)))
+	{
+#ifdef TIMEDKLINES
+		if (timedklines && (BadPtr(tmp->passwd) || !isdigit(*tmp->passwd)))
 			continue;
+#endif
 		if (!(tmp->status & (CONF_KILL | CONF_OTHERKILL)))
 			continue; /* should never happen with kconf */
 		if (!tmp->host || !tmp->name)
@@ -1295,7 +1642,7 @@ char	**comment;
 			if (strchr(tmp->host, '/'))
 			    {
 				if (match_ipmask((*tmp->host == '=') ?
-						 tmp->host+1: tmp->host, cptr))
+						 tmp->host+1: tmp->host, cptr, 1))
 					continue;
 			    }
 			else          
@@ -1308,7 +1655,7 @@ char	**comment;
 		else /* resolved */
 			if (strchr(tmp->host, '/'))
 			    {
-				if (match_ipmask(tmp->host, cptr))
+				if (match_ipmask(tmp->host, cptr, 1))
 					continue;
 			    }
 			else
@@ -1320,41 +1667,51 @@ char	**comment;
 		if ((!check || match(tmp->name, check) == 0) &&
 		    (!tmp->port || (tmp->port == cptr->acpt->port)))   
 		    {
+#ifdef TIMEDKLINES
 			now = 0;
 			if (!BadPtr(tmp->passwd) && isdigit(*tmp->passwd) &&
 			    !(now = check_time_interval(tmp->passwd, reply)))
 				continue;
 			if (now == ERR_YOUWILLBEBANNED)
 				tmp = NULL;
+#endif
 			break;
 		    }
-	    }
-
-	if (*reply)
-		sendto_one(cptr, reply, ME, now, cptr->name);
-	else if (tmp)
-		sendto_one(cptr, ":%s %d %s :%s%s", ME,
-			   ERR_YOUREBANNEDCREEP, cptr->name,
-			   BadPtr(tmp->passwd) ?
-			   "You are not welcome to this server" :
-			   "You are not welcome to this server: ",
-			   BadPtr(tmp->passwd) ? "" : tmp->passwd);
+	}
 
 	if (tmp && !BadPtr(tmp->passwd))
+	{
 		*comment = tmp->passwd;
+	}
 	else
+	{
 		*comment = NULL;
+	}
+#ifdef TIMEDKLINES
+	if (*reply)
+	{
+		sendto_one(cptr, reply, ME, now, cptr->name);
+	}
+	else
+#endif
+	if (tmp)
+	{
+		sendto_one(cptr, replies[ERR_YOUREBANNEDCREEP], 
+			ME, cptr->name,
+			BadPtr(tmp->name) ? "*" : tmp->name,
+			BadPtr(tmp->host) ? "*" : tmp->host,
+			*comment ? ": " : "",
+			*comment ? *comment : "");
+	}
 
- 	return (tmp ? -1 : 0);
+	return (tmp ? -1 : 0);
 }
 
 /*
  * For type stat, check if both name and host masks match.
  * Return -1 for match, 0 for no-match.
  */
-int	find_two_masks(name, host, stat)
-char	*name, *host;
-int	stat;
+int	find_two_masks(char *name, char *host, int stat)
 {
 	aConfItem *tmp;
 
@@ -1371,9 +1728,7 @@ int	stat;
  * to chars in passwd field.
  * Return -1 for match, 0 for no-match.
  */
-int	find_conf_flags(name, key, stat)
-char	*name, *key;
-int	stat;
+int	find_conf_flags(char *name, char *key, int stat)
 {
 	aConfItem *tmp;
 	int l;
@@ -1390,128 +1745,12 @@ int	stat;
  	return (tmp ? -1 : 0);
 }
 
-#ifdef R_LINES
-/* find_restrict works against host/name and calls an outside program 
- * to determine whether a client is allowed to connect.  This allows 
- * more freedom to determine who is legal and who isn't, for example
- * machine load considerations.  The outside program is expected to 
- * return a reply line where the first word is either 'Y' or 'N' meaning 
- * "Yes Let them in" or "No don't let them in."  If the first word 
- * begins with neither 'Y' or 'N' the default is to let the person on.
- * It returns a value of 0 if the user is to be let through -Hoppie
- */
-int	find_restrict(cptr)
-aClient	*cptr;
-{
-	aConfItem *tmp;
-	char	reply[80], temprpl[80];
-	char	*rplhold = reply, *host, *name, *s;
-	char	rplchar = 'Y';
-	int	pi[2], rc = 0, n;
-
-	if (!cptr->user)
-		return 0;
-	name = cptr->user->username;
-	host = cptr->sockhost;
-	Debug((DEBUG_INFO, "R-line check for %s[%s]", name, host));
-
-	for (tmp = conf; tmp; tmp = tmp->next)
-	    {
-		if (tmp->status != CONF_RESTRICT ||
-		    (tmp->host && host && match(tmp->host, host)) ||
-		    (tmp->name && name && match(tmp->name, name)))
-			continue;
-
-		if (BadPtr(tmp->passwd))
-			continue;
-
-		if (pipe(pi) == -1)
-		    {
-			report_error("Error creating pipe for R-line %s:%s",
-				     &me);
-			return 0;
-		    }
-		switch (rc = vfork())
-		{
-		case -1 :
-			report_error("Error forking for R-line %s:%s", &me);
-			return 0;
-		case 0 :
-		    {
-			Reg	int	i;
-
-			(void)close(pi[0]);
-			for (i = 2; i < MAXCONNECTIONS; i++)
-				if (i != pi[1])
-					(void)close(i);
-			if (pi[1] != 2)
-				(void)dup2(pi[1], 2);
-			(void)dup2(2, 1);
-			if (pi[1] != 2 && pi[1] != 1)
-				(void)close(pi[1]);
-			(void)execlp(tmp->passwd, tmp->passwd, name, host,
-				     cptr->username, 0);
-			_exit(-1);
-		    }
-		default :
-			(void)close(pi[1]);
-			break;
-		}
-		*reply = '\0';
-		(void)dgets(-1, NULL, 0); /* make sure buffer marked empty */
-		while ((n = dgets(pi[0], temprpl, sizeof(temprpl)-1)) > 0)
-		    {
-			temprpl[n] = '\0';
-			if ((s = (char *)index(temprpl, '\n')))
-			      *s = '\0';
-			if (strlen(temprpl) + strlen(reply) < sizeof(reply)-2)
-				SPRINTF(rplhold,"%s %s", rplhold, temprpl);
-			else
-			    {
-				sendto_flag(SCH_ERROR,
-					    "R-line %s/%s: reply too long!",
-					    name, host);
-				break;
-			    }
-		    }
-		(void)dgets(-1, NULL, 0); /* make sure buffer marked empty */
-		(void)close(pi[0]);
-		(void)kill(rc, SIGKILL); /* cleanup time */
-#if !defined(USE_IAUTH)
-		(void)wait(0);
-#endif
-
-		rc = 0;
-		while (*rplhold == ' ')
-			rplhold++;
-		rplchar = *rplhold; /* Pull out the yes or no */
-		while (*rplhold != ' ')
-			rplhold++;
-		while (*rplhold == ' ')
-			rplhold++;
-		(void)strcpy(reply,rplhold);
-		rplhold = reply;
-
-		if ((rc = (rplchar == 'n' || rplchar == 'N')))
-			break;
-	    }
-	if (rc)
-	    {
-		sendto_one(cptr, ":%s %d %s :Restriction: %s",
-			   ME, ERR_YOUREBANNEDCREEP, cptr->name, reply);
-		return -1;
-	    }
-	return 0;
-}
-#endif
-
-
+#ifdef TIMEDKLINES
 /*
 ** check against a set of time intervals
 */
 
-static	int	check_time_interval(interval, reply)
-char	*interval, *reply;
+static	int	check_time_interval(char *interval, char *reply)
 {
 	struct tm *tptr;
  	char	*p;
@@ -1566,6 +1805,7 @@ char	*interval, *reply;
 	    }
 	return(0);
 }
+#endif /* TIMEDKLINES */
 
 /*
 ** find_bounce
@@ -1574,38 +1814,42 @@ char	*interval, *reply;
 **	fd == -1 : not fd, class is a class number.
 **	fd == -2 : not fd, class isn't a class number.
 */
-void	find_bounce(cptr, class, fd)
-aClient *cptr;
-int	class, fd;
-    {
+void	find_bounce(aClient *cptr, int class, int fd)
+{
 	Reg	aConfItem	*aconf;
 
 	for (aconf = conf; aconf; aconf = aconf->next)
-	    {
+	{
 		if (aconf->status != CONF_BOUNCE)
+		{
 			continue;
+		}
 
 		if (fd >= 0)
+		{
 			/*
 			** early rejection,
 			** connection class and hostname are unknown
 			*/
 			if (*aconf->host == '\0')
-			    {
+			{
 				char rpl[BUFSIZE];
 				
-				SPRINTF(rpl, rpl_str(RPL_BOUNCE,"unknown"),
+				sprintf(rpl, replies[RPL_BOUNCE], ME, "unknown",
 					aconf->name, aconf->port);
 				strcat(rpl, "\r\n");
 #ifdef INET6
-				sendto(class, rpl, strlen(rpl), 0, 0, 0);
+				sendto(fd, rpl, strlen(rpl), 0, 0, 0);
 #else
-				send(class, rpl, strlen(rpl), 0);
+				send(fd, rpl, strlen(rpl), 0);
 #endif
 				return;
-			    }
+			}
 			else
+			{
 				continue;
+			}
+		}
 
 		/* fd < 0 */
 		/*
@@ -1615,35 +1859,38 @@ int	class, fd;
 		*/
 		if (fd != -2 &&
 		    !strchr(aconf->host, '.') && isdigit(*aconf->host))
-		    {
+		{
 			if (class != atoi(aconf->host))
+			{
 				continue;
-		    }
+			}
+		}
 		else
+		{
 			if (strchr(aconf->host, '/'))
-			    {
-				if (match_ipmask(aconf->host, cptr))
+			{
+				if (match_ipmask(aconf->host, cptr, 1))
 					continue;
-			    }
+			}
 			else if (match(aconf->host, cptr->sockhost))
+			{
 				continue;
+			}
+		}
 
-		sendto_one(cptr, rpl_str(RPL_BOUNCE, cptr->name), aconf->name,
-			   aconf->port);
+		sendto_one(cptr, replies[RPL_BOUNCE], ME, BadTo(cptr->name),
+			aconf->name, aconf->port);
 		return;
-	    }
+	}
 	
-    }
+}
 
 /*
 ** find_denied
 **	for a given server name, make sure no D line matches any of the
 **	servers currently present on the net.
 */
-aConfItem *
-find_denied(name, class)
-    char *name;
-    int class;
+aConfItem	*find_denied(char *name, int class)
 {
     aConfItem	*aconf;
 
@@ -1666,7 +1913,7 @@ find_denied(name, class)
 				    continue;
 			    if (!aconf2->class || ConfClass(aconf2) != ck)
 				    continue;
-			    if (find_client(aconf2->host, NULL))
+			    if (find_client(aconf2->name, NULL))
 				    return aconf2;
 			}
 		}
@@ -1682,3 +1929,4 @@ find_denied(name, class)
 	}
     return NULL;
 }
+

@@ -18,7 +18,7 @@
  */
 
 #ifndef lint
-static  char rcsid[] = "@(#)$Id: a_io.c,v 1.22 1999/07/11 22:09:59 kalt Exp $";
+static  char rcsid[] = "@(#)$Id: a_io.c,v 1.26 2003/10/18 15:31:29 q Exp $";
 #endif
 
 #include "os.h"
@@ -38,29 +38,17 @@ static char		iobuf[IOBUFSIZE+1];
 static char		rbuf[IOBUFSIZE+1];	/* incoming ircd stream */
 static int		iob_len = 0, rb_len = 0;
 
-void
-init_io()
+void	init_io(void)
 {
     bzero((char *) cldata, sizeof(cldata));
 }
 
 /* sendto_ircd() functions */
-#if ! USE_STDARG
-void
-sendto_ircd(pattern, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10)
-char    *pattern, *p1, *p2, *p3, *p4, *p5, *p6, *p7, *p8, *p9, *p10;
-#else
-void
-vsendto_ircd(char *pattern, va_list va)
-#endif
+void	vsendto_ircd(char *pattern, va_list va)
 {
 	char	ibuf[4096];
 
-#if ! USE_STDARG
-	sprintf(ibuf, pattern, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10);
-#else
 	vsprintf(ibuf, pattern, va);
-#endif
 	DebugLog((ALOG_DSPY, 0, "To ircd: [%s]", ibuf));
 	strcat(ibuf, "\n");
 	if (write(0, ibuf, strlen(ibuf)) != strlen(ibuf))
@@ -71,26 +59,20 @@ vsendto_ircd(char *pattern, va_list va)
 	    }
 }
 
-#if USE_STDARG
-void
-sendto_ircd(char *pattern, ...)
+void	sendto_ircd(char *pattern, ...)
 {
         va_list va;
         va_start(va, pattern);
         vsendto_ircd(pattern, va);
         va_end(va);
 }
-#endif
 
 /*
  * next_io
  *
  *	given an entry, look for the next module instance to start
  */
-static void
-next_io(cl, last)
-int cl;
-AnInstance *last;
+static	void	next_io(int cl, AnInstance *last)
 {
     DebugLog((ALOG_DIO, 0, "next_io(#%d, %x): last=%s state=0x%X", cl, last,
 	      (last) ? last->mod->name : "", cldata[cl].state));
@@ -210,19 +192,24 @@ AnInstance *last;
  *
  *	parses data coming from ircd (doh ;-)
  */
-static void
-parse_ircd()
+static	void	parse_ircd(void)
 {
 	char *ch, *chp, *buf = iobuf;
 	int cl = -1, ncl;
 
 	iobuf[iob_len] = '\0';
-	while (ch = index(buf, '\n'))
+	while ((ch = index(buf, '\n')))
 	    {
 		*ch = '\0';
 		DebugLog((ALOG_DSPY, 0, "parse_ircd(): got [%s]", buf));
 
 		cl = atoi(chp = buf);
+		if (cl >= MAXCONNECTIONS)
+		    {
+			sendto_log(ALOG_IRCD, LOG_CRIT,
+			   "Recompile iauth, (fatal %d>=%d)", cl, MAXCONNECTIONS);
+			exit(1);
+		    }
 		while (*chp++ != ' ');
 		switch (chp[0])
 		    {
@@ -315,7 +302,7 @@ parse_ircd()
 			if (!(cldata[cl].state & A_ACTIVE))
 			    {
 				/* this should really not happen */
-                                sendto_log(ALOG_IRCD, LOG_CRIT,
+				sendto_log(ALOG_IRCD, LOG_CRIT,
 					   "Entry %d [R] is not active!", cl);
 				break;
 			    }
@@ -323,23 +310,22 @@ parse_ircd()
 			if (cldata[ncl].state & A_ACTIVE)
 			    {
 				/* this is not supposed to happen!!! */
-                                sendto_log(ALOG_IRCD, LOG_CRIT,
-			   "Entry %d [R] is already active (fatal)!", ncl);
+				sendto_log(ALOG_IRCD, LOG_CRIT,
+				   "Entry %d [R] is already active (fatal)!", ncl);
 				exit(1);
 			    }
 			if (cldata[ncl].instance || cldata[ncl].rfd > 0 ||
 			    cldata[ncl].wfd > 0)
 			    {
 				sendto_log(ALOG_IRCD, LOG_CRIT,
-				   "Entry %d is already active! (fatal)",
-					   ncl);
+				   "Entry %d is already active! (fatal)", ncl);
 				exit(1);
 			    }
 			if (cldata[ncl].authuser)
 			    {
 				/* shouldn't be here - hmmpf */
 				sendto_log(ALOG_IRCD|ALOG_DIO, LOG_WARNING,
-					   "Unreleased data [%d]!", ncl);
+				   "Unreleased data [%d]!", ncl);
 				free(cldata[ncl].authuser);
 				cldata[ncl].authuser = NULL;
 			    }
@@ -487,8 +473,7 @@ parse_ircd()
  *
  *	select()/poll() loop
  */
-void
-loop_io()
+void	loop_io(void)
 {
     /* the following is from ircd/s_bsd.c */
 #if ! USE_POLL
@@ -600,15 +585,19 @@ loop_io()
 	pfd = poll_fdarray;
 #endif
 	if (nfds == -1)
+	{
 		if (errno == EINTR)
+		{
 			return;
+		}
 		else
-		    {
+		{
 			sendto_log(ALOG_IRCD, LOG_CRIT,
 				   "fatal select/poll error: %s",
 				   strerror(errno));
 			exit(1);
-		    }
+		}
+	}
 	if (nfds == 0)	/* end of timeout */
 		return;
 
@@ -712,6 +701,8 @@ loop_io()
 		    }
 	    }
 
+#if 0
+/* stupid code that tries to find a bug, but does nothing --Q */
 #if defined(IAUTH_DEBUG)
 	if (nfds > 0)
 		sendto_log(ALOG_DIO, 0, "io_loop(): nfds = %d !!!", nfds);
@@ -720,6 +711,7 @@ loop_io()
 	if (nfds == 0)
 		while (i <= cl_highest)
 		    {
+			/* Q got core here, he had i=-1 */
 			if (cldata[i].rfd > 0 && TST_READ_EVENT(cldata[i].rfd))
 			    {
 				/* this should not happen! */
@@ -729,16 +721,13 @@ loop_io()
 		    }
 # endif
 #endif
+#endif
 }
 
 /*
  * set_non_blocking (ripped from ircd/s_bsd.c)
  */
-static void
-set_non_blocking(fd, ip, port)
-int fd;
-char *ip;
-u_short port;
+static	void	set_non_blocking(int fd, char *ip, u_short port)
 {
 	int     res, nonb = 0;
 
@@ -774,10 +763,7 @@ u_short port;
  *
  *	Returns the fd
  */
-int
-tcp_connect(ourIP, theirIP, port, error)
-char *ourIP, *theirIP, **error;
-u_short port;
+int	tcp_connect(char *ourIP, char *theirIP, u_short port, char **error)
 {
 	int fd;
 	static char errbuf[BUFSIZ];
@@ -797,7 +783,7 @@ u_short port;
 	bzero((char *)&sk, sizeof(sk));
 	sk.SIN_FAMILY = AFINET;
 #if defined(INET6)
-	if(!inet_pton(AF_INET6, ourIP, sk.sin6_addr.s6_addr))
+	if(!inetpton(AF_INET6, ourIP, sk.sin6_addr.s6_addr))
 		bcopy(minus_one, sk.sin6_addr.s6_addr, IN6ADDRSZ);
 #else
 	sk.sin_addr.s_addr = inetaddr(ourIP);
@@ -812,7 +798,7 @@ u_short port;
 	    }
 	set_non_blocking(fd, theirIP, port);
 #if defined(INET6)
-	if(!inet_pton(AF_INET6, theirIP, sk.sin6_addr.s6_addr))
+	if(!inetpton(AF_INET6, theirIP, sk.sin6_addr.s6_addr))
 		bcopy(minus_one, sk.sin6_addr.s6_addr, IN6ADDRSZ);
 #else
 	sk.sin_addr.s_addr = inetaddr(theirIP);
@@ -829,3 +815,4 @@ u_short port;
 	*error = NULL;
 	return fd;
 }
+

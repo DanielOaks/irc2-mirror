@@ -19,7 +19,7 @@
  */
 
 #ifndef lint
-static  char rcsid[] = "@(#)$Id: packet.c,v 1.8 1999/04/19 22:26:22 kalt Exp $";
+static  char rcsid[] = "@(#)$Id: packet.c,v 1.11 2003/10/18 15:31:28 q Exp $";
 #endif
 
 #include "os.h"
@@ -54,10 +54,7 @@ static  char rcsid[] = "@(#)$Id: packet.c,v 1.8 1999/04/19 22:26:22 kalt Exp $";
 **	with cptr of "local" variation, which contains all the
 **	necessary fields (buffer etc..)
 */
-int	dopacket(cptr, buffer, length)
-Reg	aClient *cptr;
-char	*buffer;
-Reg	int	length;
+int	dopacket(aClient *cptr, char *buffer, int length)
 {
 	Reg	char	*ch1;
 	Reg	char	*ch2, *bufptr;
@@ -69,24 +66,9 @@ Reg	int	length;
  
 	me.receiveB += length; /* Update bytes received */
 	cptr->receiveB += length;
-	if (cptr->receiveB > 1023)
-	    {
-		cptr->receiveK += (cptr->receiveB >> 10);
-		cptr->receiveB &= 0x03ff;	/* 2^10 = 1024, 3ff = 1023 */
-	    }
 	if (acpt != &me)
 	    {
 		acpt->receiveB += length;
-		if (acpt->receiveB > 1023)
-		    {
-			acpt->receiveK += (acpt->receiveB >> 10);
-			acpt->receiveB &= 0x03ff;
-		    }
-	    }
-	else if (me.receiveB > 1023)
-	    {
-		me.receiveK += (me.receiveB >> 10);
-		me.receiveB &= 0x03ff;
 	    }
 
 	bufptr = cptr->buffer;
@@ -170,11 +152,13 @@ Reg	int	length;
 			** Socket is dead so exit (which always returns with
 			** FLUSH_BUFFER here).  - avalon
 			*/
-			if (cptr->flags & FLAGS_DEADSOCKET)
+			if (IsDead(cptr))
 			    {
 				if (cptr->exitc == EXITC_REG)
 					cptr->exitc = EXITC_DEAD;
 				return exit_client(cptr, cptr, &me,
+						   (cptr->exitc == EXITC_SENDQ) ?
+						   "Max SendQ exceeded" :
 						   "Dead Socket");
 			    }
 			/*
@@ -195,3 +179,4 @@ Reg	int	length;
 	cptr->count = ch1 - bufptr;
 	return r;
 }
+

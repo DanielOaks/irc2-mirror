@@ -18,7 +18,7 @@
  */
 
 #ifndef lint
-static  char rcsid[] = "@(#)$Id: mod_rfc931.c,v 1.16 1999/07/11 20:56:25 chopin Exp $";
+static  char rcsid[] = "@(#)$Id: mod_rfc931.c,v 1.19 2003/10/15 19:55:49 q Exp $";
 #endif
 
 #include "os.h"
@@ -30,7 +30,7 @@ static  char rcsid[] = "@(#)$Id: mod_rfc931.c,v 1.16 1999/07/11 20:56:25 chopin 
 #define OPT_PROTOCOL	0x1
 #define OPT_LAZY	0x2
 
-struct _data
+struct _instance_data
 {
 	u_char	options;
 	u_int	tried;
@@ -49,14 +49,12 @@ struct _data
  *	Returns NULL if everything went fine,
  *	an error message otherwise.
  */
-char *
-rfc931_init(self)
-AnInstance *self;
+static	char	*rfc931_init(AnInstance *self)
 {
-	struct _data *dt;
+	struct _instance_data *dt;
 
-	dt = (struct _data *) malloc(sizeof(struct _data));
-	bzero((char *) dt, sizeof(struct _data));
+	dt = (struct _instance_data *) malloc(sizeof(struct _instance_data));
+	bzero((char *) dt, sizeof(struct _instance_data));
 	self->data = (void *) dt;
 
 	/* undocumented option */
@@ -81,11 +79,9 @@ AnInstance *self;
  *
  *	This procedure is called when a particular module is unloaded.
  */
-void
-rfc931_release(self)
-AnInstance *self;
+static	void	rfc931_release(AnInstance *self)
 {
-	struct _data *st = self->data;
+	struct _instance_data *st = self->data;
 	free(st);
 }
 
@@ -94,11 +90,9 @@ AnInstance *self;
  *
  *	This procedure is called regularly to update statistics sent to ircd.
  */
-void
-rfc931_stats(self)
-AnInstance *self;
+static	void	rfc931_stats(AnInstance *self)
 {
-	struct _data *st = self->data;
+	struct _instance_data *st = self->data;
 
 	sendto_ircd("S rfc931 connected %u unix %u other %u bad %u out of %u",
 		    st->connected, st->unx, st->other, st->bad, st->tried);
@@ -117,13 +111,11 @@ AnInstance *self;
  *	In case of failure, it's responsible for cleaning up (e.g. rfc931_clean
  *	will NOT be called)
  */
-int
-rfc931_start(cl)
-u_int cl;
+static	int	rfc931_start(u_int cl)
 {
 	char *error;
 	int fd;
-	struct _data *st = cldata[cl].instance->data;
+	struct _instance_data *st = cldata[cl].instance->data;
 
 	if (st->options & OPT_LAZY && cldata[cl].state & A_DENY)
 	    {
@@ -163,11 +155,9 @@ u_int cl;
  *
  *	It is responsible for sending error messages where appropriate.
  */
-int
-rfc931_work(cl)
-u_int cl;
+static	int	rfc931_work(u_int cl)
 {
-	struct _data *st = cldata[cl].instance->data;
+	struct _instance_data *st = cldata[cl].instance->data;
 
     	DebugLog((ALOG_D931, 0, "rfc931_work(%d): %d %d buflen=%d", cl,
 		  cldata[cl].rfd, cldata[cl].wfd, cldata[cl].buflen));
@@ -212,9 +202,11 @@ u_int cl;
 				  cl, cldata[cl].inbuffer));
 			if (cldata[cl].buflen > 1024)
 			    cldata[cl].inbuffer[1024] = '\0';
-			if (ch = index(cldata[cl].inbuffer, '\n'))
+			if ((ch = index(cldata[cl].inbuffer, '\n')))
+			{
 				/* delimiter for ircd<->iauth messages. */
 				*ch = '\0';
+			}
 			ch = cldata[cl].inbuffer;
 			while (*ch && !isdigit(*ch)) ch++;
 			if (!*ch || atoi(ch) != cldata[cl].itsport)
@@ -323,11 +315,9 @@ u_int cl;
  *	It is responsible for cleaning up any allocated data, and in particular
  *	closing file descriptors.
  */
-void
-rfc931_clean(cl)
-u_int cl;
+static	void	rfc931_clean(u_int cl)
 {
-	struct _data *st = cldata[cl].instance->data;
+	struct _instance_data *st = cldata[cl].instance->data;
 
 	st->clean += 1;
 	DebugLog((ALOG_D931, 0, "rfc931_clean(%d): cleaning up", cl));
@@ -350,11 +340,9 @@ u_int cl;
  *
  *	Returns 0 if things are okay, -1 if authentication was aborted.
  */
-int
-rfc931_timeout(cl)
-u_int cl;
+static	int	rfc931_timeout(u_int cl)
 {
-	struct _data *st = cldata[cl].instance->data;
+	struct _instance_data *st = cldata[cl].instance->data;
 
 	st->timeout += 1;
 	DebugLog((ALOG_D931, 0, "rfc931_timeout(%d): calling rfc931_clean ",
@@ -366,3 +354,4 @@ u_int cl;
 aModule Module_rfc931 =
 	{ "rfc931", rfc931_init, rfc931_release, rfc931_stats,
 	  rfc931_start, rfc931_work, rfc931_timeout, rfc931_clean };
+
