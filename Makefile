@@ -22,35 +22,43 @@ RM=/bin/rm
 INCLUDEDIR=../include
 
 # use the following on MIPS:
-# CFLAGS=-systype bsd43 -I$(INCLUDEDIR)
+# CFLAGS= -systype bsd43 -DSYSTYPE_BSD43 -I$(INCLUDEDIR)
 # on NEXT use:
 # CFLAGS=-bsd -I$(INCLUDEDIR)
 #otherwise this:
-CFLAGS=-I$(INCLUDEDIR)
+CFLAGS= -I$(INCLUDEDIR) -g
 
 #use the following on SUN OS without nameserver libraries inside libc
-# IRCDLIBS=-lresolv
+IRCDLIBS= -lresolv
 #
 #on NeXT other than 2.0:
 # IRCDLIBS=-lsys_s
 #
-# HPUX: (was IRCDLIBS= -lbsd but apparently its not needed)
+# HPUX: (was IRCDLIBS= -lBSD but apparently its not needed)
 # IRCDLIBS=
 #
 #and otherwise:
-IRCDLIBS=
+#IRCDLIBS=
 
 # IRCDMODE is the mode you want the binary to be.
 # the 4 at the front is important (allows for setuidness)
+#
+# WARNING: if you are making ircd SUID or SGID, check config.h to make sure
+#          you are not defining CMDLINE_CONFIG 
 IRCDMODE = 4711
 
-MAKE = make 'CFLAGS=${CFLAGS}' 'CC=${CC}' 'IRCDLIBS=${IRCDLIBS}' 'IRCDMODE=${IRCDMODE}'
+MAKE = make 'CFLAGS=${CFLAGS}' 'CC=${CC}' 'IRCDLIBS=${IRCDLIBS}'\
+	'IRCDMODE=${IRCDMODE}'
 SHELL=/bin/sh
 SUBDIRS=common ircd irc
-# use this if you don't want the default client compiled
-# SUBDIRS=common ircd
 
 all:	build
+
+server:
+	@echo 'Making server'; cd ircd; ${MAKE} build; cd ..;
+
+client:
+	@echo 'Makign client'; cd irc; ${MAKE} build; cd ..;
 
 build:
 	@for i in $(SUBDIRS); do \
@@ -78,4 +86,5 @@ install:
 	echo "Installing...";
 
 rcs:
-	cii -H -R Makefile common include irc ircd
+	cii -H -R Makefile common include ircd
+

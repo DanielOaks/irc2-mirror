@@ -30,20 +30,20 @@
  *
  */
 
-char debug_id[] = "debug.c v2.0 (c) 1988 University of Oulu, Computing Center and Jarkko Oikarinen";
+char debug_id[] = "debug.c v2.0 (c) 1988 University of Oulu, Computing Center\
+and Jarkko Oikarinen";
 
-#include <sys/types.h>
-#include <sys/file.h>
-#include <stdio.h>
 #include "struct.h"
 #include "common.h"
+#include <stdio.h>
+#include <sys/file.h>
 #if HPUX
 #include <fcntl.h>
 #endif
 
 extern int debuglevel;
 
-#ifndef debug
+#ifdef DEBUGMODE
 debug(level, form, para1, para2, para3, para4, para5, para6)
 int level;
 char *form, *para1, *para2, *para3, *para4, *para5, *para6;
@@ -53,5 +53,11 @@ char *form, *para1, *para2, *para3, *para4, *para5, *para6;
       fprintf(stderr, form, para1, para2, para3, para4, para5, para6);
       fputc('\n', stderr);
     }
+}
+#else
+debug()
+{
+	/* do nothing so as not to waste much cpu.
+	 * would make gcc very unhappy :) -avalon */
 }
 #endif
