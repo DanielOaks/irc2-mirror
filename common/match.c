@@ -18,7 +18,7 @@
  */
 
 #ifndef lint
-static  char sccsid[] = "%W% %G% (C) 1988 University of Oulu, \
+static  char sccsid[] = "@(#)match.c	1.1 1/22/95 (C) 1988 University of Oulu, \
 Computing Center and Jarkko Oikarinen";
 #endif
 
@@ -28,7 +28,7 @@ Computing Center and Jarkko Oikarinen";
 
 
 static	int	calls = 0;
-#define	MAX_CALLS	200
+#define	MAX_CALLS	512
 /*
 **  Compare if a given string (name) matches the given
 **  mask (which can contain wild cards: '*' - match any
