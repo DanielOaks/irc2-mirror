@@ -27,6 +27,10 @@
 
 #include "setup.h"
 
+#if defined(linux)
+# define _GNU_SOURCE 1
+#endif
+
 #if HAVE_STDIO_H
 # include <stdio.h>
 #endif
@@ -479,10 +483,12 @@ extern char *inet_ntoa __P((struct in_addr in));
 # if USE_CURSESX && HAVE_CURSESX_H
 #  include <cursesX.h>
 # endif
-# if (USE_NCURSES || USE_CURSES) && HAVE_CURSES_H
+# if (USE_NCURSES || USE_CURSES)
 #  if HAVE_NCURSES_H
 #   include <ncurses.h>
-#  else
+#  elif HAVE_NCURSES_NCURSES_H
+#   include <ncurses/ncurses.h>
+#  elif HAVE_CURSES_H
 #   include <curses.h>
 #  endif
 # endif
@@ -725,21 +731,15 @@ static unsigned char minus_one[]={ 255, 255, 255, 255, 255, 255, 255, 255, 255,
 # define	S_ADDR		s6_addr
 # define	IN_ADDR		in6_addr
 
-# ifndef uint32_t
-#  define uint32_t __u32
-# endif
-
 # define MYDUMMY_SIZE 128
 char mydummy[MYDUMMY_SIZE];
 char mydummy2[MYDUMMY_SIZE];
 
-# if defined(linux) || defined(__NetBSD__) || defined(__FreeBSD__) || defined(bsdi)
-#  ifndef s6_laddr
-#   define s6_laddr        s6_addr32
-#  endif
-# endif
-
-# if defined(linux)
+# if defined(linux) \
+	&& (((defined(__GLIBC__) \
+	&& (__GLIBC_MAJOR__ == 2) && (__GLIBC_MINOR__ < 1) \
+	|| __GLIBC_MAJOR__ < 2)) \
+	|| !defined(__GLIBC__))
 static const struct in6_addr in6addr_any={ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
 						0, 0, 0, 0, 0};
 # endif
