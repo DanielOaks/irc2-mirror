@@ -18,7 +18,7 @@
  */
 
 #ifndef lint
-static const volatile char rcsid[] = "@(#)$Id: s_err.c,v 1.65 2008/06/08 21:48:24 chopin Exp $";
+static const volatile char rcsid[] = "@(#)$Id: s_err.c,v 1.70 2008/06/21 11:59:52 chopin Exp $";
 #endif
 
 #include "os.h"
@@ -759,8 +759,8 @@ char *	replies[] = {
 /* 705 */ (char *)NULL,
 /* 706 */ (char *)NULL,
 /* 707 */ (char *)NULL,
-/* 708 */ (char *)NULL,
-/* 709 RPL_ETRACE */		":%s 709 %s %s %d %s %s %s %s :%s",
+/* 708 RPL_ETRACEFULL */		":%s 709 %s %s %d %s %s %s %s %s %s :%s",
+/* 709 */ (char *)NULL,
 /* 710 */ (char *)NULL,
 /* 711 */ (char *)NULL,
 /* 712 */ (char *)NULL,
@@ -810,7 +810,7 @@ char *	replies[] = {
 /* 756 */ (char *)NULL,
 /* 757 */ (char *)NULL,
 /* 758 */ (char *)NULL,
-/* 759 */ (char *)NULL,
+/* 759 RPL_ETRACEEND */ ":%s 759 %s %s %s.%s :End of ETRACE",
 /* 760 */ (char *)NULL,
 /* 761 */ (char *)NULL,
 /* 762 */ (char *)NULL,

@@ -1,14 +1,14 @@
-# @(#)$Id: RELEASE_NOTES,v 1.79 2008/06/09 21:04:31 chopin Exp $
+# @(#)$Id: RELEASE_NOTES,v 1.84 2008/06/24 22:29:48 chopin Exp $
 
 This is version 2.11.2 of the IRC software.
 ===============================================================================
 
 New features in 2.11.2:
-	* KLINE command (uses seperate file and is undoable other than manual
+	* "KLINE" command (uses seperate file and is undoable other than manual
 	  edit of that file and rehash).
 	* MINLOCALNICKLEN to enforce minimum nick len used by local clients.
-	* rehash d to reread resolv.conf
-	* rehash a to restart iauth (to make it reread iauth.conf)
+	* "REHASH d" to reread resolv.conf
+	* "REHASH a" to restart iauth (to make it reread iauth.conf)
 	* standalone mode (ircd -p standalone) to avoid split mode for users 
 	  not linking any servers.
 	* ENABLE_CIDR_LIMITS (enabled by default) allows to limit client host
@@ -19,11 +19,22 @@ New features in 2.11.2:
 	  limiting scope of X-line matching user host/ip mask.
 	* services can now have their distribution based on SID (it affects not
 	  only visibility, but also scope of information they get).
+	* new oper command "ETRACE": a hybrid between "STATS L" and "TRACE", also
+	  showing arguments used during registration; useful for bot hunting
+	  (requires ACL_TRACE oper priviledge).
+	* new oper command (if defined) "SIDTRACE": just like "ETRACE", but shows
+	  also remote clients from servers that share common SID prefix with us
+	  (requires new ACL_SIDTRACE oper priviledge).
+	* M4 passes INET6 define. If it's GNU variant, it also adds -I includedir.
 
 Important changes in 2.11.2 (since 2.11.1):
 	* &CLIENTS format is changed if XLINE is defined (sends first three
 	  parameters of client USER command before fourth one).
 	* MAXBANS increased to 64, TOPICLEN increased to 255.
+	* Y-line [user@]host limits are now counted against user IPs, not user
+	  hostnames. If you want old behaviour, undefine YLINE_LIMITS_IPHASH.
+	* &LOCAL unauth notices show ips now, not hostnames.
+	* res.c got fixed (hopefully this time for good).
 
 Important configuration changes in 2.11.2 (since 2.11.1):
 
@@ -39,7 +50,7 @@ Important configuration changes in 2.11.2 (since 2.11.1):
 	* S-lines need to be changed if used for TKLINE service: change type
 	  from 0x40000000 to 0x00100000. Service can KLINE now too (0x00200000).
 
-This is version 2.11.2 of the IRC software.
+This is version 2.11.1 of the IRC software.
 ===============================================================================
 
 New features in 2.11.1:

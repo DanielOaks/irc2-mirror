@@ -22,7 +22,7 @@
  */
 
 #ifndef lint
-static const volatile char rcsid[] = "@(#)$Id: s_serv.c,v 1.290 2008/06/08 21:48:24 chopin Exp $";
+static const volatile char rcsid[] = "@(#)$Id: s_serv.c,v 1.296 2008/06/21 12:00:47 chopin Exp $";
 #endif
 
 #include "os.h"
@@ -1924,7 +1924,7 @@ int	m_stats(aClient *cptr, aClient *sptr, int parc, char *parv[])
 		/* send list of file descriptors 
 		 * Avaible only for local opers for security reasons.
 		 */
-		if (!IsAnOper(sptr) || !MyConnect(sptr))
+		if (!is_allowed(sptr, ACL_TRACE) || !MyConnect(sptr))
 		{
 			stat = '*';
 			break;
@@ -1968,6 +1968,9 @@ int	m_stats(aClient *cptr, aClient *sptr, int parc, char *parv[])
 			for (i = 0; i <= highest_fd; i++)
 			    {
 				if (!(acptr = local[i]))
+					continue;
+				if (IsUnknown(acptr) && 
+					!(IsAnOper(sptr) && SendWallops(sptr)))
 					continue;
 				if (IsPerson(acptr) && (!MyConnect(sptr)
 				    || !is_allowed(sptr, ACL_TRACE)) && acptr != sptr)
@@ -2819,13 +2822,9 @@ int	m_trace(aClient *cptr, aClient *sptr, int parc, char *parv[])
 				continue;   /* then don't show the client */
 			}
 			
-			/* Report unknown connections to local users
-			 * and remote opers with +w set */
-			if (IsUnknown(a2cptr)
-			    && !((IsAnOper(sptr) || MyClient(sptr))
-				 && SendWallops(sptr)
-				)
-			    )
+			/* Report unknown connections to opers with +w set */
+			if (IsUnknown(a2cptr) &&
+				!(IsAnOper(sptr) && SendWallops(sptr)))
 			{
 				continue;
 			}
@@ -2853,12 +2852,17 @@ int	m_etrace(aClient *cptr, aClient *sptr, int parc, char *parv[])
 	if (parc > 1)
 	{
 		if ((acptr = find_person(parv[1], NULL)) && MyClient(acptr))
-			sendto_one(sptr, replies[RPL_ETRACE],
+			sendto_one(sptr, replies[RPL_ETRACEFULL],
 				ME, sptr->name,
-				IsOper(acptr) ? "Oper" : "User",
+				IsAnOper(acptr) ? "Oper" : "User",
 				get_client_class(acptr),
 				acptr->name, acptr->user->username,
 				acptr->user->host, acptr->user->sip,
+#ifdef XLINE
+				acptr->user2, acptr->user3, 
+#else
+				"-", "-",
+#endif
 				acptr->info);
 	}
 	else
@@ -2871,17 +2875,22 @@ int	m_etrace(aClient *cptr, aClient *sptr, int parc, char *parv[])
 			if (!IsPerson(acptr))
 				continue;
 		
-			sendto_one(sptr, replies[RPL_ETRACE],
+			sendto_one(sptr, replies[RPL_ETRACEFULL],
 				ME, sptr->name, 
-				IsOper(acptr) ? "Oper" : "User", 
+				IsAnOper(acptr) ? "Oper" : "User", 
 				get_client_class(acptr), 
 				acptr->name, acptr->user->username, 
 				acptr->user->host, acptr->user->sip,
+#ifdef XLINE
+				acptr->user2, acptr->user3, 
+#else
+				"-", "-",
+#endif
 				acptr->info);
 		}
 	}
 
-	sendto_one(sptr, replies[RPL_TRACEEND], ME, sptr->name, ME,
+	sendto_one(sptr, replies[RPL_ETRACEEND], ME, sptr->name, ME,
 			version, debugmode);
 	return 2;
 }
@@ -2902,16 +2911,22 @@ int	m_sidtrace(aClient *cptr, aClient *sptr, int parc, char *parv[])
 		if (strncmp(acptr->user->uid, me.serv->sid, SIDLEN-1))
 			continue;
 
-		sendto_one(sptr, replies[RPL_ETRACE],
+		sendto_one(sptr, replies[RPL_ETRACEFULL],
 			ME, sptr->name,
 			IsAnOper(acptr) ? "Oper" : "User", 
 			MyClient(acptr) ? get_client_class(acptr) : -1, 
 			acptr->name, acptr->user->username,
 			acptr->user->host, acptr->user->sip, 
+#ifdef XLINE
+			MyClient(acptr) ? acptr->user2 : "-",
+			MyClient(acptr) ? acptr->user3 : "-",
+#else
+			"-", "-",
+#endif
 			acptr->info);
 	}
 
-	sendto_one(sptr, replies[RPL_TRACEEND], ME, sptr->name, "*",
+	sendto_one(sptr, replies[RPL_ETRACEEND], ME, sptr->name, "*",
 			version, debugmode);
 
 	return 3;

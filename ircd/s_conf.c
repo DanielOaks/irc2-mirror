@@ -48,7 +48,7 @@
  */
 
 #ifndef lint
-static const volatile char rcsid[] = "@(#)$Id: s_conf.c,v 1.180 2008/06/09 18:51:20 chopin Exp $";
+static const volatile char rcsid[] = "@(#)$Id: s_conf.c,v 1.187 2008/06/24 22:24:52 chopin Exp $";
 #endif
 
 #include "os.h"
@@ -813,10 +813,15 @@ int	attach_conf(aClient *cptr, aConfItem *aconf)
 		if (ConfMaxHLocal(aconf) > 0 || ConfMaxUHLocal(aconf) > 0 ||
 		    ConfMaxHGlobal(aconf) > 0 || ConfMaxUHGlobal(aconf) > 0 )
 		{
+#ifdef YLINE_LIMITS_IPHASH
 			for ((user = hash_find_ip(cptr->user->sip, NULL));
 			     user; user = user->iphnext)
-			{
 				if (!mycmp(cptr->user->sip, user->sip))
+#else
+			for ((user = hash_find_hostname(cptr->sockhost, NULL));
+			     user; user = user->hhnext)
+				if (!mycmp(cptr->sockhost, user->host))
+#endif
 				{
 					ghcnt++;
 					if (ConfMaxHGlobal(aconf) > 0 &&
@@ -860,7 +865,6 @@ int	attach_conf(aClient *cptr, aConfItem *aconf)
 						return -7; /* EXITC_GUHMAX */
 					}
 				}
-			}
 		}
 	}
 
@@ -1321,6 +1325,14 @@ int	openconf(void)
 {
 #ifdef	M4_PREPROC
 	int	pi[2], i;
+# ifdef HAVE_GNU_M4
+	char	*includedir, *includedirptr;
+
+	includedir = strdup(IRCDM4_PATH);
+	includedirptr = strrchr(includedir, '/');
+	if (includedirptr)
+		*includedirptr = '\0';
+# endif
 #else
 	int ret;
 #endif
@@ -1359,7 +1371,17 @@ int	openconf(void)
 		 * goes out with report_error.  Could be dangerous,
 		 * two servers running with the same fd's >:-) -avalon
 		 */
-		(void)execlp(M4_PATH, "m4", IRCDM4_PATH, configfile, 0);
+		(void)execlp(M4_PATH, "m4",
+#ifdef HAVE_GNU_M4
+#ifdef USE_M4_PREFIXES
+			"-P",
+#endif
+			"-I", includedir,
+#endif
+#ifdef INET6
+			"-DINET6",
+#endif
+			IRCDM4_PATH, configfile, 0);
 		if (serverbooting)
 		{
 			fprintf(stderr,"Fatal Error: Error executing m4 (%s)",
@@ -1821,10 +1843,22 @@ int 	initconf(int opt)
 		if (aconf->status & CONF_SERVICE)
 			aconf->port &= SERVICE_MASK_ALL;
 		if (aconf->status & (CONF_SERVER_MASK|CONF_SERVICE))
-			if (ncount > MAXCONFLINKS || ccount > MAXCONFLINKS ||
-			    !aconf->host || index(aconf->host, '*') ||
-			     index(aconf->host,'?') || !aconf->name)
-				continue;
+		{
+			char *hostptr = NULL;
+
+			/* since it's u@h syntax, let's ignore user part
+			   in checks below --B. */
+			hostptr = index(aconf->host, '@');
+			if (hostptr != NULL)
+				hostptr++;	/* move ptr after '@' */
+			else
+				hostptr = aconf->host;
+
+			if (ncount > MAXCONFLINKS || ccount > MAXCONFLINKS
+				|| !hostptr || index(hostptr, '*')
+				|| index(hostptr,'?') || !aconf->name)
+				continue;	/* next config line */
+		}
 
 		if (aconf->status &
 		    (CONF_SERVER_MASK|CONF_OPERATOR|CONF_SERVICE))
@@ -2612,6 +2646,7 @@ void do_kline(int tkline, char *who, time_t time, char *user, char *host, char *
 				sprintf(buff, "Kill line active: %.80s",
 					aconf->passwd);
 			}
+			acptr->exitc = tkline ? EXITC_TKLINE : EXITC_KLINE;
 			(void) exit_client(acptr, acptr, &me, buff);
 		}
 	}
