@@ -23,12 +23,21 @@ typedef	struct	hashentry {
 	void	*list;
 	} aHashEntry;
 
-#define	HASHSIZE	809	/* prime number */
+#ifndef	DEBUGMODE
+#define	HASHSIZE	839	/* prime number */
 /*
  * choose hashsize from these:
  *
  * 293, 313, 337, 359, 379, 401, 421, 443, 463, 487, 509, 541,
- * 563, 587, 607, 631, 653, 673, 701, 721, 739, 761, 787, 809
+ * 563, 587, 607, 631, 653, 673, 701, 721, 739, 761, 787, 809,
+ * 907, 941, 983,1019,1051,1117,1163,1213,1249,1297,1319,1361,
+ *1381,1427,1459,1493,1511,1567,1597,1607,1657,1669,1721,1759,
+ *1801,1867,1889,1933,1987,2003
  */
 
 #define	CHANNELHASHSIZE	293	/* prime number */
+#else
+int	HASHSIZE = 839;
+int	CHANNELHASHSIZE = 293;
+#endif
+

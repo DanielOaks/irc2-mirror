@@ -19,8 +19,15 @@ else
    generation=0
 fi
 
-
 generation=`expr $generation + 1`
+
+sumsserv=`sum s_serv.c`;
+sumsuser=`sum s_user.c`;
+sumchan=`sum channel.c`;
+sumsbsd=`sum s_bsd.c`;
+sumhash=`sum hash.c`;
+sumsmisc=`sum s_misc.c`;
+sumircd=`sum ircd.c`;
 
 creation=`date | \
 awk '{if (NF == 6) \
@@ -73,15 +80,18 @@ char *infotext[] =
 	"The following persons have made many changes and enhancements to the",
 	"code and still know how IRC really works if you have questions about it:",
 	"",
-	"WiZ          Jarkko Oikarinen         jto@tolsun.oulu.fi",
 	"Avalon       Darren Reed              avalon@coombs.anu.edu.au",
-	"Wumpus       Greg Lindahl             gl8f@virginia.edu",
-	"Argv         Armin Gruner             Armin.Gruner@Informatik.TU-Muenchen.de",
 	"msa          Markku Savela            Markku.Savela@vtt.fi",
+	"Wumpus       Greg Lindahl             gl8f@virginia.edu",
+	"WiZ          Jarkko Oikarinen         jto@tolsun.oulu.fi",
+	"Argv         Armin Gruner             Armin.Gruner@Informatik.TU-Muenchen.de",
 	"",
-	"Major debugging for version 2.7 provided by:",
+	"Thanks to the following people for help with preparing 2.8",
 	"",
-	"pjg          Paul Graham              pjg@acsu.buffalo.edu",
+	"phone        Matthew Green            phone@coombs.anu.edu.au",
+	"Sodapop      Chuck Kane               ckane@ece.uiuc.edu",
+	"Skygod       Matt Lyle                matt@oc.com",
+	"Vesa         Vesa Ruokonen            ruokonen@lut.fi",
 	"",
 	"Those who helped in prior versions and continue to be helpful:",
 	"",
@@ -91,10 +101,15 @@ char *infotext[] =
 	"Bill Wisner         Tom Davis           Hugo Calendar",
 	"Tom Hopkins         Stephen van den Berg",
 	"Bo Adler            Michael Sandrof     Jon Solomon",
-	"Jan Peterson        Helen Rose",
+	"Jan Peterson        Helen Rose          Paul Graham",
 	"",
 	"Thanks also goes to those persons not mentioned here who have added",
 	"their advice, opinions, and code to IRC.",
+	"Thanks also to those who provide the kind sys admins who let me and",
+	"others continue to develop IRC.",
+	"",
+	"[$sumsserv] [$sumchan] [$sumsbsd] [$sumsuser]",
+	"[$sumhash] [$sumsmisc] [$sumircd]",
 	0,
     };
 !SUB!THIS!

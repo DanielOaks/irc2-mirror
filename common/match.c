@@ -17,22 +17,14 @@
  *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-/*
- * $Id: match.c,v 6.1 1991/07/04 21:03:55 gruner stable gruner $
- *
- * $Log: match.c,v $
- * Revision 6.1  1991/07/04  21:03:55  gruner
- * Revision 2.6.1 [released]
- *
- * Revision 6.0  1991/07/04  18:04:49  gruner
- * frozen beta revision 2.6.1
- *
- */
+#ifndef lint
+static  char sccsid[] = "@(#)match.c	2.1 12/20/92 2 %S (C) 1988 University of Oulu, \
+Computing Center and Jarkko Oikarinen";
+#endif
 
-#include "config.h"
+#include "struct.h"
 #include "common.h"
 #include "sys.h"
-#include <sys/types.h>
 
 /*
 **  Compare if a given string (name) matches the given
@@ -42,35 +34,33 @@
 **	return	0, if match
 **		1, if no match
 */
-int	matches(mask, name)
-char	*mask, *name;
+int	matches(ma, na)
+char *ma, *na;
     {
-	Reg1 u_char m, *msk;
-	Reg2 u_char c, *nam;
+	Reg1 unsigned char m, *mask = (unsigned char *)ma;
+	Reg2 unsigned char c, *name = (unsigned char *)na;
 
-	msk = (u_char *)mask;
-	nam = (u_char *)name;
-	for (;; msk++, nam++)
+	for (;; mask++, name++)
 	    {
 #ifdef USE_OUR_CTYPE
-		m = tolower(*msk);
-		c = tolower(*nam);
+		m = tolower(*mask);
+		c = tolower(*name);
 #else
-		m = islower(*msk) ? *msk : tolower(*msk);
-		c = islower(*nam) ? *nam : tolower(*nam);
+		m = islower(*mask) ? *mask : tolower(*mask);
+		c = islower(*mask) ? *mask : tolower(*name);
 #endif
 		if (c == '\0')
 			break;
-		if (m != '?' && m != c || c == '*')
+		if ((m != '?' && m != c) || c == '*')
 			break;
 	    }
 	if (m == '*')
 	    {
-		for ( ; *msk == '*'; msk++);
-		if (*msk == '\0')
+		for ( ; *mask == '*'; mask++);
+		if (*mask == '\0')
 			return(0);
-		for (; *nam && matches((char *)msk, (char *)nam); nam++);
-		return(*nam ? 0 : 1);
+		for (; *name && matches((char *)mask, (char *)name); name++);
+		return(*name ? 0 : 1);
 	    }
 	else
 		return ((m == '\0' && c == '\0') ? 0 : 1);
