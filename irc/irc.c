@@ -19,7 +19,7 @@
  */
 
 #ifndef lint
-static  char rcsid[] = "@(#)$Id: irc.c,v 1.6.4.2 2001/02/09 13:56:26 q Exp $";
+static  char rcsid[] = "@(#)$Id: irc.c,v 1.6 1998/12/13 00:02:35 kalt Exp $";
 #endif
  
 #include "os.h"
@@ -157,7 +157,7 @@ char	*argv[];
 	channel[0] = '\0';
 	me.user = &meUser;
 	me.from = &me;
-	me.info = (char *) malloc(REALLEN + 1);
+	me.info = (char *) malloc(REALLEN);
 	setuid(getuid());
 	version = make_version();
 
@@ -342,9 +342,7 @@ char	*argv[];
 		if (logfile)
 			do_log(NULL, NULL);
 		printf("Press any key.");
-#ifdef	DOCURSES
 		refresh();
-#endif
         	getchar();
 		printf("\n");
 #ifdef DOCURSES

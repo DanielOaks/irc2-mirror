@@ -22,7 +22,7 @@
  */
 
 #ifndef lint
-static  char rcsid[] = "@(#)$Id: s_service.c,v 1.30.2.3 2001/05/14 04:12:32 chopin Exp $";
+static  char rcsid[] = "@(#)$Id: s_service.c,v 1.30 1999/07/02 16:49:37 kalt Exp $";
 #endif
 
 #include "os.h"
@@ -90,10 +90,8 @@ aClient *cptr;
 			if ((bcptr = sp->bcptr) &&
 			    !myncmp(name, bcptr->name, len))
 			    {
-				if (!acptr || bcptr->hopcount < acptr->hopcount)
-				{
-					acptr = bcptr;
-				}
+				acptr = bcptr;
+				break;
 			    }
 	return (acptr ? acptr : cptr);
 }
@@ -119,21 +117,21 @@ void	check_services_butone(long action, char *server, aClient *cptr, char *fmt, 
 {
 	char nbuf[NICKLEN + USERLEN + HOSTLEN + 3];
 	Reg	aClient	*acptr;
-	Reg	aService *sp;
+	Reg	int	i;
 
 	*nbuf = '\0';
-	for (sp = svctop; sp; sp = sp->nexts)
+	for (i = 0; i <= highest_fd; i++)
 	    {
-		if (!MyConnect(sp->bcptr) ||
-		    (cptr && sp->bcptr == cptr->from))
+		if (!(acptr = local[i]) || !IsService(acptr) ||
+		    (cptr && acptr == cptr->from))
 			continue;
 		/*
 		** found a (local) service, check if action matches what's
 		** wanted AND if it comes from a server matching the dist
 		*/
-		if ((sp->wants & action)
-		    && (!server || !match(sp->dist, server)))
-			if ((sp->wants & SERVICE_WANT_PREFIX) && 
+		if ((acptr->service->wants & action)
+		    && (!server || !match(acptr->service->dist, server)))
+			if ((acptr->service->wants & SERVICE_WANT_PREFIX) && 
 			    cptr && IsRegisteredUser(cptr) &&
 			    (action & SERVICE_MASK_PREFIX))
 			    {
@@ -149,21 +147,21 @@ void	check_services_butone(long action, char *server, aClient *cptr, char *fmt, 
 					cptr->user->username,cptr->user->host);
 
 #if ! USE_STDARG
-				sendto_one(sp->bcptr, fmt, nbuf, p2, p3, p4, p5,
+				sendto_one(acptr, fmt, nbuf, p2, p3, p4, p5,
 					   p6, p7, p8);
 #else
-				sendto_one(sp->bcptr, ":%s%s", nbuf, buf);
+				sendto_one(acptr, ":%s%s", nbuf, buf);
 #endif
 			    }
 			else
 			    {
 #if ! USE_STDARG
-				sendto_one(sp->bcptr, fmt, p1, p2, p3, p4, p5,
+				sendto_one(acptr, fmt, p1, p2, p3, p4, p5,
 					   p6, p7, p8);
 #else
 				va_list	va;
 				va_start(va, fmt);
-				vsendto_one(sp->bcptr, fmt, va);
+				vsendto_one(acptr, fmt, va);
 				va_end(va);
 #endif
 			    }
@@ -237,19 +235,19 @@ aClient *sptr;
 char   *umode;
 {
 	Reg	aClient	*acptr;
-	Reg	aService *sp;
+	Reg	int	i;
 
-	for (sp = svctop; sp; sp = sp->nexts)
+	for (i = 0; i <= highest_fd; i++)
 	    {
-		if (!MyConnect(sp->bcptr))
+		if (!(acptr = local[i]) || !IsService(acptr))
 			continue;
 		/*
 		** found a (local) service, check if action matches what's
 		** wanted AND if it comes from a server matching the dist
 		*/
-		if ((sp->wants & SERVICE_MASK_NUM)
-		    && !match(sp->dist, sptr->user->server))
-			sendnum_toone(sp->bcptr, sp->wants, sptr,
+		if ((acptr->service->wants & SERVICE_MASK_NUM)
+		    && !match(acptr->service->dist, sptr->user->server))
+			sendnum_toone(acptr, acptr->service->wants, sptr,
 				      umode);
 	    }
 }
@@ -389,7 +387,7 @@ char	*parv[];
 		sp = me.serv;
 		if (!do_nick_name(parv[1], 0))
 		    {
-			sendto_one(sptr, err_str(ERR_ERRONEOUSNICKNAME,
+			sendto_one(sptr, err_str(ERR_ERRONEUSNICKNAME,
 				   parv[0]), parv[1]);
 			return 1;
 		    }

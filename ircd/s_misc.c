@@ -22,7 +22,7 @@
  */
 
 #ifndef lint
-static  char rcsid[] = "@(#)$Id: s_misc.c,v 1.30.2.8 2004/05/09 20:20:33 chopin Exp $";
+static  char rcsid[] = "@(#)$Id: s_misc.c,v 1.30 1999/07/21 22:57:39 kalt Exp $";
 #endif
 
 #include "os.h"
@@ -64,22 +64,13 @@ time_t	clock;
 	gm = &gmbuf;
 	lt = localtime(&clock);
 
-	minswest = (gm->tm_hour - lt->tm_hour) * 60 
-		    + (gm->tm_min - lt->tm_min);	
-	if (lt->tm_yday != gm->tm_yday)
-	    {
-		if ((lt->tm_yday > gm->tm_yday 
-		    && lt->tm_year == gm->tm_year) 
-		    || (lt->tm_yday < gm->tm_yday 
-		    && lt->tm_year != gm->tm_year)) 
-		    {
-			minswest -= 24 * 60;
-		    }
-		else
-		    {
-			minswest += 24 * 60;
-		    }
-	    }
+	if (lt->tm_yday == gm->tm_yday)
+		minswest = (gm->tm_hour - lt->tm_hour) * 60 +
+			   (gm->tm_min - lt->tm_min);
+	else if (lt->tm_yday > gm->tm_yday)
+		minswest = (gm->tm_hour - (lt->tm_hour + 24)) * 60;
+	else
+		minswest = ((lt->tm_hour + 24) - gm->tm_hour) * 60;
 
 	plus = (minswest > 0) ? '-' : '+';
 	if (minswest < 0)
@@ -321,10 +312,6 @@ char	*name;
 			acptr->flags |= FLAGS_HIDDEN;
 			j++;
 		}
-		else
-		{
-			acptr->flags &= ~FLAGS_HIDDEN;
-		}
 	}
 	return j;
 }
@@ -363,6 +350,10 @@ char	*comment;	/* Reason for the exit */
 	Reg	aClient	*acptr;
 	Reg	aClient	*next;
 	Reg	aServer *asptr;
+	Reg	aService *asvptr;
+#if defined(FNAME_USERLOG) || defined(USE_SYSLOG) || defined(USE_SERVICES)
+	time_t	on_for;
+#endif
 	char	comment1[HOSTLEN + HOSTLEN + 2];
 	int	flags = 0;
 
@@ -381,17 +372,34 @@ char	*comment;	/* Reason for the exit */
     || (defined(USE_SYSLOG) && (defined(SYSLOG_USERS) || defined(SYSLOG_CONN)))
 		if (IsPerson(sptr))
 		    {
-# if defined(FNAME_USERLOG) || defined(USE_SERVICES) || \
-	(defined(USE_SYSLOG) && defined(SYSLOG_USERS))
-			sendto_flog(sptr, NULL, sptr->user->username,
+			/* It's ugly, it's simple, it's not so important */
+			on_for = timeofday - sptr->firsttime + 1;
+# if defined(USE_SYSLOG) && defined(SYSLOG_USERS)
+			syslog(LOG_NOTICE,
+			       "%s (%3d:%02d:%02d): %s@%s [%s] %c\n",
+			       myctime(sptr->firsttime),
+			       on_for / 3600, (on_for % 3600)/60,
+			       on_for % 60,
+			       sptr->user->username, sptr->user->host,
+			       sptr->auth, sptr->exitc);
+# endif
+# if defined(FNAME_USERLOG) || defined(USE_SERVICES)
+			sendto_flog(sptr, NULL, on_for, sptr->user->username,
 				    sptr->user->host);
 # endif
 		    }
 		else if (sptr->exitc != EXITC_REF && sptr->exitc != EXITC_AREF)
 		    {
-# if defined(FNAME_CONNLOG) || defined(USE_SERVICES) || \
-	(defined(USE_SYSLOG) && defined(SYSLOG_CONN))
-			sendto_flog(sptr, " Unknown ", "<none>", 
+# if defined(USE_SYSLOG) && defined(SYSLOG_CONN)
+			syslog(LOG_NOTICE, 
+			       "%s ( Unknown ): <none>@%s [%s] %c\n",
+			       myctime(sptr->firsttime),
+			       (IsUnixSocket(sptr)) ? me.sockhost :
+			       ((sptr->hostp) ? sptr->hostp->h_name :
+				sptr->sockhost), sptr->auth, sptr->exitc);
+# endif
+# if defined(FNAME_CONNLOG) || defined(USE_SERVICES)
+			sendto_flog(sptr, " Unknown ", 0, "<none>", 
 				    (IsUnixSocket(sptr)) ? me.sockhost :
 				    ((sptr->hostp) ? sptr->hostp->h_name :
 				     sptr->sockhost));
@@ -419,7 +427,7 @@ char	*comment;	/* Reason for the exit */
 
 		      if (sptr->auth != sptr->username)
 			  {
-			    istat.is_authmem -= strlen(sptr->auth) + 1;
+			    istat.is_authmem -= sizeof(sptr->auth);
 			    istat.is_auth -= 1;
 			    MyFree(sptr->auth);
 			    sptr->auth = sptr->username;
@@ -472,14 +480,15 @@ char	*comment;	/* Reason for the exit */
 				     && asptr->bcptr != sptr))
 					continue;
 				/*
-				** This version doesn't need QUITs to be
+			        ** This version doesn't need QUITs to be
 				** propagaged unless the remote server is
 				** hidden (by a hostmask)
 				*/
-				flags = FLAGS_SPLIT;
 				if (mark_blind_servers(NULL,
 						       asptr->bcptr->name))
-					flags |= FLAGS_HIDDEN;
+					flags |= FLAGS_SPLIT | FLAGS_HIDDEN;
+				else
+					flags |= FLAGS_SPLIT;
 				while (GotDependantClient(asptr->bcptr))
 				    {
 					acptr = asptr->bcptr->prev;
@@ -512,9 +521,10 @@ char	*comment;	/* Reason for the exit */
 		** generate QUITs locally when receiving a SQUIT
 		** check for hostmasking.
  		*/
- 		flags = FLAGS_SPLIT;
  		if (mark_blind_servers(cptr, sptr->name))
- 			flags |= FLAGS_HIDDEN;
+ 			flags = FLAGS_SPLIT | FLAGS_HIDDEN;
+ 		else
+ 			flags = FLAGS_SPLIT;
 
 		if (IsServer(from))
 			/* this is a guess */
@@ -575,14 +585,6 @@ char	*comment;	/* Reason for the exit */
 	if (IsServer(sptr) && (cptr == sptr))
 		sendto_flag(SCH_SERVER, "Sending SQUIT %s (%s)",
 			    cptr->name, comment);
-	/* non-local server splitted and it matches one of our C-lines,
-	** and we have temporarily disabled AC -- restore it! --B. */
-	if (IsServer(sptr) && (cptr != sptr) &&
-		nextconnect == 0 && find_conf_name(sptr->name,
-		(CONF_CONNECT_SERVER|CONF_ZCONNECT_SERVER)))
-	{
-		nextconnect = timeofday + HANGONRETRYDELAY;
-	}
 	
 	exit_one_client(cptr, sptr, from, (*comment1) ? comment1 : comment);
 	return cptr == sptr ? FLUSH_BUFFER : 0;
@@ -831,7 +833,7 @@ void	initstats()
 {
 	bzero((char *)&istat, sizeof(istat));
 	istat.is_serv = 1;
-	istat.is_localc = 1;	/* &me */
+	istat.is_remc = 1;	/* don't ask me why, I forgot. */
 	bzero((char *)&ircst, sizeof(ircst));
 }
 
@@ -892,35 +894,35 @@ char	*name;
 			sp->is_ni++;
 	    }
 
-	sendto_one(cptr, ":%s %d %s :accepts %lu refused %lu",
+	sendto_one(cptr, ":%s %d %s :accepts %u refused %u",
 		   ME, RPL_STATSDEBUG, name, sp->is_ac, sp->is_ref);
-	sendto_one(cptr, ":%s %d %s :unknown: commands %lu prefixes %lu",
+	sendto_one(cptr, ":%s %d %s :unknown: commands %u prefixes %u",
 		   ME, RPL_STATSDEBUG, name, sp->is_unco, sp->is_unpf);
-	sendto_one(cptr, ":%s %d %s :nick collisions %lu unknown closes %lu",
+	sendto_one(cptr, ":%s %d %s :nick collisions %u unknown closes %u",
 		   ME, RPL_STATSDEBUG, name, sp->is_kill, sp->is_ni);
-	sendto_one(cptr, ":%s %d %s :wrong direction %lu empty %lu",
+	sendto_one(cptr, ":%s %d %s :wrong direction %u empty %u",
 		   ME, RPL_STATSDEBUG, name, sp->is_wrdi, sp->is_empt);
-	sendto_one(cptr, ":%s %d %s :users without servers %lu ghosts N/A",
+	sendto_one(cptr, ":%s %d %s :users without servers %u ghosts N/A",
 		   ME, RPL_STATSDEBUG, name, sp->is_nosrv);
-	sendto_one(cptr, ":%s %d %s :numerics seen %lu mode fakes %lu",
+	sendto_one(cptr, ":%s %d %s :numerics seen %u mode fakes %u",
 		   ME, RPL_STATSDEBUG, name, sp->is_num, sp->is_fake);
-	sendto_one(cptr, ":%s %d %s :auth: successes %lu fails %lu",
+	sendto_one(cptr, ":%s %d %s :auth: successes %u fails %u",
 		   ME, RPL_STATSDEBUG, name, sp->is_asuc, sp->is_abad);
-	sendto_one(cptr,":%s %d %s :local connections %lu udp packets %lu",
+	sendto_one(cptr,":%s %d %s :local connections %u udp packets %u",
 		   ME, RPL_STATSDEBUG, name, sp->is_loc, sp->is_udpok);
-	sendto_one(cptr,":%s %d %s :udp errors %lu udp dropped %lu",
+	sendto_one(cptr,":%s %d %s :udp errors %u udp dropped %u",
 		   ME, RPL_STATSDEBUG, name, sp->is_udperr, sp->is_udpdrop);
 	sendto_one(cptr,
-   ":%s %d %s :link checks %lu passed %lu 15s/%lu 30s dropped %luSq/%luYg/%luFl",
+   ":%s %d %s :link checks %u passed %u 15s/%u 30s dropped %uSq/%uYg/%uFl",
 		   ME, RPL_STATSDEBUG, name, sp->is_ckl, sp->is_cklq,
 		   sp->is_cklok, sp->is_cklQ, sp->is_ckly, sp->is_cklno);
 	if (sp->is_wwcnt)
-		sendto_one(cptr, ":%s %d %s :whowas turnover %lu/%lu/%lu [%lu]",
+		sendto_one(cptr, ":%s %d %s :whowas turnover %u/%u/%u [%u]",
 			   ME, RPL_STATSDEBUG, name, sp->is_wwmt,
 			   (u_int) (sp->is_wwt / sp->is_wwcnt), sp->is_wwMt,
 			   KILLCHASETIMELIMIT);
 	if (sp->is_lkcnt)
-		sendto_one(cptr, ":%s %d %s :ndelay turnover %lu/%lu/%lu [%lu]",
+		sendto_one(cptr, ":%s %d %s :ndelay turnover %u/%u/%u [%u]",
 			   ME, RPL_STATSDEBUG, name, sp->is_lkmt,
 			   (u_int) (sp->is_lkt / sp->is_lkcnt), sp->is_lkMt,
 			   DELAYCHASETIMELIMIT);
@@ -929,15 +931,15 @@ char	*name;
 		   (bootopt & BOOT_STRICTPROT) ? 1 : 0);
 	sendto_one(cptr, ":%s %d %s :Client - Server",
 		   ME, RPL_STATSDEBUG, name);
-	sendto_one(cptr, ":%s %d %s :connected %lu %lu",
+	sendto_one(cptr, ":%s %d %s :connected %u %u",
 		   ME, RPL_STATSDEBUG, name, sp->is_cl, sp->is_sv);
-	sendto_one(cptr, ":%s %d %s :bytes sent %lu.%luK %lu.%luK",
+	sendto_one(cptr, ":%s %d %s :bytes sent %u.%uK %u.%uK",
 		   ME, RPL_STATSDEBUG, name,
 		   sp->is_cks, sp->is_cbs, sp->is_sks, sp->is_sbs);
-	sendto_one(cptr, ":%s %d %s :bytes recv %lu.%luK %lu.%luK",
+	sendto_one(cptr, ":%s %d %s :bytes recv %u.%uK %u.%uK",
 		   ME, RPL_STATSDEBUG, name,
 		   sp->is_ckr, sp->is_cbr, sp->is_skr, sp->is_sbr);
-	sendto_one(cptr, ":%s %d %s :time connected %lu %lu",
+	sendto_one(cptr, ":%s %d %s :time connected %u %u",
 		   ME, RPL_STATSDEBUG, name, sp->is_cti, sp->is_sti);
 #if defined(USE_IAUTH)
 	report_iauth_stats(cptr, name);
@@ -951,7 +953,7 @@ struct tm	motd_tm;
 void read_motd(filename)
 char *filename;
 {
-	int fd, len;
+	int fd;
 	register aMotd *temp, *last;
 	struct stat Sb;
 	char line[80];
@@ -973,14 +975,12 @@ char *filename;
 	motd_tm = *localtime(&Sb.st_mtime);
 	(void)dgets(-1, NULL, 0); /* make sure buffer is at empty pos */
 	last = NULL;
-	while ((len=dgets(fd, line, sizeof(line)-1)) > 0)
+	while (dgets(fd, line, sizeof(line)-1) > 0)
 	    {
 		if ((tmp = strchr(line, '\n')) != NULL)
 			*tmp = (char) 0;
-		else if ((tmp = strchr(line, '\r')) != NULL)
+		if ((tmp = strchr(line, '\r')) != NULL)
 			*tmp = (char) 0;
-		else
-			line[len] = '\0';
 		temp = (aMotd *)MyMalloc(sizeof(aMotd));
 		if (!temp)
 			outofmemory();

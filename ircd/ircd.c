@@ -19,7 +19,7 @@
  */
 
 #ifndef lint
-static  char rcsid[] = "@(#)$Id: ircd.c,v 1.62.2.10 2004/05/09 20:09:08 chopin Exp $";
+static  char rcsid[] = "@(#)$Id: ircd.c,v 1.62 1999/08/13 17:17:42 kalt Exp $";
 #endif
 
 #include "os.h"
@@ -84,9 +84,7 @@ int s;
 {
 #ifdef	USE_SYSLOG
 	(void)syslog(LOG_CRIT, "Server Killed By SIGTERM");
-	(void)closelog();
 #endif
-	logfiles_close();
 	ircd_writetune(tunefile);
 	flush_connections(me.fd);
 	exit(-1);
@@ -173,7 +171,6 @@ void	server_reboot()
 #ifdef USE_SYSLOG
 	(void)closelog();
 #endif
-	logfiles_close();
 	for (i = 3; i < MAXCONNECTIONS; i++)
 		(void)close(i);
 	if (!(bootopt & (BOOT_TTY|BOOT_DEBUG)))
@@ -188,7 +185,7 @@ void	server_reboot()
 #ifdef USE_SYSLOG
 		/* Have to reopen since it has been closed above */
 		
-		openlog(mybasename(myargv[0]), LOG_PID|LOG_NDELAY, LOG_FACILITY);
+		openlog(myargv[0], LOG_PID|LOG_NDELAY, LOG_FACILITY);
 		syslog(LOG_CRIT, "execv(%s,%s) failed: %m\n", IRCD_PATH,
 		       myargv[0]);
 		closelog();
@@ -291,12 +288,6 @@ time_t	currenttime;
 				    "Connection to %s[%s] activated.",
 				    con_conf->name, con_conf->host);
 	    }
-	else
-	{
-		/* No suitable conf for AC was found, so why bother checking
-		** again? If some server quits, it'd get reenabled --B. */
-		next = 0;
-	}
 	Debug((DEBUG_NOTICE,"Next connection check : %s", myctime(next)));
 	/*
 	 * calculate preference value based on accumulated stats.
@@ -365,11 +356,7 @@ time_t	currenttime;
 		 * K and R lines once per minute, max.  This is the max.
 		 * granularity in K-lines anyway (with time field).
 		 */
-		if (
-#if defined(TIMEDKLINES) || ( defined(R_LINES) && defined(R_LINES_OFTEN) )
-			(currenttime - lkill > TIMEDKLINES) || 
-#endif /* TIMEDKLINES */
-			rehashed)
+		if ((currenttime - lkill > 60) || rehashed)
 		    {
 			if (IsPerson(cptr))
 			    {
@@ -648,14 +635,7 @@ char	*argv[];
 
 #ifdef	CHROOTDIR
 	ircd_res_init();
-	if (chdir(ROOT_PATH)!=0)
-	{
-		perror("chdir");
-		(void)fprintf(stderr,"%s: Cannot chdir: %s.\n", IRCD_PATH,
-			ROOT_PATH);
-		exit(5);
-	}
-	if (chroot(ROOT_PATH)!=0)
+	if (chroot(ROOT_PATH))
 	    {
 		perror("chroot");
 		(void)fprintf(stderr,"%s: Cannot chroot: %s.\n", IRCD_PATH,
@@ -878,10 +858,9 @@ char	*argv[];
 	open_debugfile();
 	timeofday = time(NULL);
 	(void)init_sys();
-	logfiles_open();
 
 #ifdef USE_SYSLOG
-	openlog(mybasename(myargv[0]), LOG_PID|LOG_NDELAY, LOG_FACILITY);
+	openlog(myargv[0], LOG_PID|LOG_NDELAY, LOG_FACILITY);
 #endif
 	timeofday = time(NULL);
 	if (initconf(bootopt) == -1)
@@ -908,10 +887,7 @@ char	*argv[];
 			acptr = NULL;
 		    }
 		/* exit if there is nothing to listen to */
-		if (acptr == NULL && !(bootopt & BOOT_INETD))
-			exit(-1);
-		/* Is there an M-line? */
-		if (!find_me())
+		if (acptr == NULL)
 			exit(-1);
 	    }
 
@@ -1053,6 +1029,7 @@ void	io_loop()
 		** Timed out (e.g. *NO* traffic at all).
 		** Try again but also check to empty sendQ's for all clients.
 		*/
+		sendto_flag(SCH_DEBUG, "read_message(RO) -> 0 [%d]", delay);
 		(void)read_message(delay - 1, &fdall, 0);
 	    }
 	timeofday = time(NULL);
@@ -1194,15 +1171,6 @@ static	void	setup_signals()
 	(void)sigaddset(&act.sa_mask, SIGCHLD);
 	(void)sigaction(SIGCHLD, &act, NULL);
 # endif
-	
-# if defined(__FreeBSD__)	
-	/* Don't core after detaching from gdb on fbsd */
-
-	act.sa_handler = SIG_IGN;
-	act.sa_flags = 0;
-	(void)sigaddset(&act.sa_mask, SIGTRAP);
-	(void)sigaction(SIGTRAP,&act,NULL);
-# endif /* __FreeBSD__ */
 
 #else /* POSIX_SIGNALS */
 
@@ -1225,12 +1193,6 @@ static	void	setup_signals()
 	(void)signal(SIGUSR1, s_slave);
 	(void)signal(SIGCHLD, SIG_IGN);
 # endif
-	
-# if defined(__FreeBSD__)
-	/* don't core after detaching from gdb on fbsd */
-	(void)signal(SIGTRAP, SIG_IGN);
-# endif /* __FreeBSD__ */
-
 #endif /* POSIX_SIGNAL */
 
 #ifdef RESTARTING_SYSTEMCALLS
@@ -1282,7 +1244,7 @@ char *filename;
 	int fd, t_data[6];
 	char buf[100];
 
-	memset(buf, 0, sizeof(buf));
+	buf[0] = '\0';
 	if ((fd = open(filename, O_RDONLY)) != -1)
 	    {
 		read(fd, buf, 100);	/* no panic if this fails.. */

@@ -18,8 +18,26 @@
  *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+/* -- Jto -- 20 Jun 1990
+ * extern void free() fixed as suggested by
+ * gruner@informatik.tu-muenchen.de
+ */
+
+/* -- Jto -- 03 Jun 1990
+ * Added chname initialization...
+ */
+
+/* -- Jto -- 24 May 1990
+ * Moved is_full() to channel.c
+ */
+
+/* -- Jto -- 10 May 1990
+ * Added #include <sys.h>
+ * Changed memset(xx,0,yy) into bzero(xx,yy)
+ */
+
 #ifndef lint
-static  char rcsid[] = "@(#)$Id: list.c,v 1.9.2.4 2004/05/09 19:30:27 chopin Exp $";
+static  char rcsid[] = "@(#)$Id: list.c,v 1.9 1999/07/02 16:49:37 kalt Exp $";
 #endif
 
 #include "os.h"
@@ -140,13 +158,6 @@ aClient	*cptr;
 {
 	if (cptr->info != DefInfo)
 		MyFree(cptr->info);
-	if (MyConnect(cptr) && cptr->auth != cptr->username)
-	{
-	    sendto_flag(SCH_ERROR, "Please report to ircd-bug@irc.org about cptr->auth allocated but not free()d!");
-		istat.is_authmem -= strlen(cptr->auth) + 1;
-		istat.is_auth -= 1;
-		MyFree(cptr->auth);
-	}
 	MyFree((char *)cptr);
 }
 
@@ -323,9 +334,7 @@ void	remove_client_from_list(cptr)
 Reg	aClient	*cptr;
 {
 	checklist();
-	/* is there another way, at this point? */
-	if (cptr->hopcount == 0 || 
-		cptr->hopcount == 1 && IsServer(cptr))
+	if (cptr->hopcount == 0) /* is there another way, at this point? */
 		istat.is_localc--;
 	else
 		istat.is_remc--;

@@ -492,13 +492,11 @@ struct	stats {
 	u_int	is_loc;	/* local connections made */
 	u_int	is_nosrv; /* user without server */
 	u_long	is_wwcnt; /* number of nicks overwritten in whowas[] */
-	unsigned long long	is_wwt;	/* sum of elapsed time on when 
-					** overwriting whowas[] */
+	u_long	is_wwt;	  /* sum of elapsed time on when overwriting whowas[]*/
 	u_long	is_wwMt;  /* max elapsed time on when overwriting whowas[] */
 	u_long	is_wwmt;  /* min elapsed time on when overwriting whowas[] */
 	u_long	is_lkcnt; /* number of nicks overwritten in locked[] */
-	unsigned long long	is_lkt;	/* sum of elapsed time on when
-					** overwriting locked[]*/
+	u_long	is_lkt;   /* sum of elapsed time on when overwriting locked[]*/
 	u_long	is_lkMt;  /* max elapsed time on when overwriting locked[] */
 	u_long	is_lkmt;  /* min elapsed time on when overwriting locked[] */
 	u_int	is_ckl;   /* calls to check_link() */
@@ -574,7 +572,7 @@ struct Channel	{
 	Link	*members;	/* channel members */
 	Link	*invites;	/* outstanding invitations */
 	Link	*mlist;		/* list of extended modes: +b/+e/+I */
-	Link	*clist;		/* list of local! connections which are members */
+	Link	*clist;		/* list of connections which are members */
 	time_t	history;	/* channel history (aka channel delay) */
 	time_t	reop;		/* server reop stamp for !channels */
 	char	chname[1];
@@ -799,7 +797,6 @@ typedef	struct	{
 #define EXITC_AREFQ	'u'	/* Unauthorized by iauth, be quiet */
 #define EXITC_AUTHFAIL	'A'	/* Authentication failure (iauth problem) */
 #define EXITC_AUTHTOUT	'a'	/* Authentication time out */
-#define EXITC_VIRUS	'v'	/* joined a channel used by PrettyPark virus */
 
 /* eXternal authentication slave OPTions */
 #define	XOPT_REQUIRED	0x01	/* require authentication be done by iauth */

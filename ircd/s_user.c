@@ -22,7 +22,7 @@
  */
 
 #ifndef lint
-static  char rcsid[] = "@(#)$Id: s_user.c,v 1.86.2.29 2004/02/26 18:00:59 chopin Exp $";
+static  char rcsid[] = "@(#)$Id: s_user.c,v 1.86 1999/07/17 11:47:49 q Exp $";
 #endif
 
 #include "os.h"
@@ -318,9 +318,15 @@ ereject_user(cptr, shortm, longm)
 aClient *cptr;
 char *shortm, *longm;
 {
-#if defined(FNAME_CONNLOG) || defined(USE_SERVICES) || \
-	(defined(USE_SYSLOG) && defined(SYSLOG_CONN))
-	sendto_flog(cptr, shortm, "<none>",
+#if defined(USE_SYSLOG) && defined(SYSLOG_CONN)
+	syslog(LOG_NOTICE, "%s ( %s ): <none>@%s [%s] %c\n",
+	       myctime(cptr->firsttime), shortm, longm,
+	       (IsUnixSocket(cptr)) ? me.sockhost :
+	       ((cptr->hostp) ? cptr->hostp->h_name : cptr->sockhost),
+	       cptr->auth, cptr->exitc);
+#endif		    
+#if defined(FNAME_CONNLOG) || defined(USE_SERVICES)
+	sendto_flog(cptr, shortm, 0, "<none>",
 		    (IsUnixSocket(cptr)) ? me.sockhost :
 		    ((cptr->hostp) ? cptr->hostp->h_name : cptr->sockhost));
 #endif
@@ -557,9 +563,13 @@ char	*nick, *username;
 				    user->username, sptr->sockhost);
 			ircstp->is_ref++;
 			sptr->exitc = EXITC_REF;
-#if defined(FNAME_CONNLOG) || defined(USE_SERVICES) || \
-	(defined(USE_SYSLOG) && defined(SYSLOG_CONN))
-			sendto_flog(sptr, " K lined ", user->username,
+#if defined(USE_SYSLOG) && defined(SYSLOG_CONN)
+			syslog(LOG_NOTICE, "%s ( K lined ): %s@%s [%s] %c\n",
+			       myctime(sptr->firsttime), user->username,
+			       user->host, sptr->auth, '-');
+#endif		    
+#if defined(FNAME_CONNLOG) || defined(USE_SERVICES)
+			sendto_flog(sptr, " K lined ", 0, user->username,
 				    user->host);
 #endif
 			if (reason)
@@ -574,9 +584,13 @@ char	*nick, *username;
 				    user->username, sptr->sockhost);
 			ircstp->is_ref++;
 			sptr->exitc = EXITC_REF;
-# if defined(FNAME_CONNLOG) || defined(USE_SERVICES) || \
-	(defined(USE_SYSLOG) && defined(SYSLOG_CONN))
-			sendto_flog(sptr, " R lined ", user->username,
+# if defined(USE_SYSLOG) && defined(SYSLOG_CONN)
+			syslog(LOG_NOTICE, "%s ( R lined ): %s@%s [%s] %c\n",
+			       myctime(sptr->firsttime), user->username,
+			       user->host, sptr->username, '-');
+# endif		    
+# if defined(FNAME_CONNLOG) || defined(USE_SERVICES)
+			sendto_flog(sptr, " R lined ", 0, user->username,
 				    user->host);
 # endif
 			return exit_client(cptr, sptr, &me , "R-lined");
@@ -590,11 +604,23 @@ char	*nick, *username;
 	    }
 	else
 		strncpyzt(user->username, username, USERLEN+1);
-
 	SetClient(sptr);
-	if (!MyConnect(sptr))
-/* && IsServer(cptr)) -- obsolete, old 2.8 protocol;
-   someone needs to clean all this 2.8 stuff --Beeth */
+	if (MyConnect(sptr))
+	    {
+		sprintf(buf, "%s!%s@%s", nick, user->username, user->host);
+		sptr->exitc = EXITC_REG;
+		sendto_one(sptr, rpl_str(RPL_WELCOME, nick), buf);
+		/* This is a duplicate of the NOTICE but see below...*/
+		sendto_one(sptr, rpl_str(RPL_YOURHOST, nick),
+			   get_client_name(&me, FALSE), version);
+		sendto_one(sptr, rpl_str(RPL_CREATED, nick), creation);
+		sendto_one(sptr, rpl_str(RPL_MYINFO, parv[0]),
+			   ME, version);
+		(void)m_lusers(sptr, sptr, 1, parv);
+		(void)m_motd(sptr, sptr, 1, parv);
+		nextping = timeofday;
+	    }
+	else if (IsServer(cptr))
 	    {
 		acptr = find_server(user->server, NULL);
 		if (acptr && acptr->from != cptr)
@@ -628,6 +654,13 @@ char	*nick, *username;
 				   user->servp->tok, 
 				   (*buf) ? buf : "+", sptr->info);
 	    }	/* for(my-leaf-servers) */
+	if (MyConnect(sptr))
+	    {
+		if (IsRestricted(sptr))
+			sendto_one(sptr, err_str(ERR_RESTRICTED, nick));
+		send_umode(sptr, sptr, 0, ALL_UMODES, buf);
+	    }
+
 	if (IsInvisible(sptr))		/* Can be initialized in m_user() */
 		istat.is_user[1]++;	/* Local and server defaults +i */
 	else
@@ -636,21 +669,6 @@ char	*nick, *username;
 	    {
 		istat.is_unknown--;
 		istat.is_myclnt++;
-		sprintf(buf, "%s!%s@%s", nick, user->username, user->host);
-		sptr->exitc = EXITC_REG;
-		sendto_one(sptr, rpl_str(RPL_WELCOME, nick), buf);
-		/* This is a duplicate of the NOTICE but see below...*/
-		sendto_one(sptr, rpl_str(RPL_YOURHOST, nick),
-			   get_client_name(&me, FALSE), version);
-		sendto_one(sptr, rpl_str(RPL_CREATED, nick), creation);
-		sendto_one(sptr, rpl_str(RPL_MYINFO, parv[0]),
-			   ME, version);
-		(void)m_lusers(sptr, sptr, 1, parv);
-		(void)m_motd(sptr, sptr, 1, parv);
-		if (IsRestricted(sptr))
-			sendto_one(sptr, err_str(ERR_RESTRICTED, nick));
-		send_umode(sptr, sptr, 0, ALL_UMODES, buf);
-		nextping = timeofday;
 	    }
 #ifdef	USE_SERVICES
 #if 0
@@ -708,56 +726,21 @@ char	*parv[];
 		*s = '\0';
 	strncpyzt(nick, parv[1], NICKLEN+1);
 
-	if (cptr->serv)
-	{
-		if (parc != 8 && parc != 2)
-		{
-			char buf[BUFSIZE];
-			int k;
-
-badparamcountkills:
-			sendto_flag(SCH_NOTICE,
-				"Bad NICK param count (%d) for %s from %s via %s",
-				parc, parv[1], sptr->name,
-				get_client_name(cptr, FALSE));
-			sendto_one(cptr, ":%s KILL %s :%s (Bad NICK %d)",
-				ME, nick, ME, parc);
-			buf[0] = '\0';
-			for (k = 1; k < parc; k++)
-			{
-				strcat(buf, " ");
-				strcat(buf, parv[k]);
-			}
-			sendto_flag(SCH_ERROR,
-				"Bad NICK param count (%d) from %s via %s: %s NICK%s",
-				parc, sptr->name,
-				get_client_name(cptr, FALSE),
-				parv[0], buf[0] ? buf : "");
-			return 0;
-		}
-		else if (parc == 8)
-		{
-			/* :server NICK new hop user name srv flags :info */
-			user = parv[3];
-			host = parv[4];
-		}
-		else /* parc == 2 */
-		{
-			/* :old NICK new */
-			user = sptr->user->username;
-			host = sptr->user->host;
-		}
-	}
+	if (parc == 8 && cptr->serv)
+	    {
+		user = parv[3];
+		host = parv[4];
+	    }
 	else
-	{
+	    {
 		if (sptr->user)
-		{
-			user = sptr->user->username;
+		    {
+			user = sptr->username;
 			host = sptr->user->host;
-		}
+		    }
 		else
 			user = host = "";
-	}
+	    }
 	/*
 	 * if do_nick_name() returns a null name OR if the server sent a nick
 	 * name and do_nick_name() changed it in some way (due to rules of nick
@@ -767,7 +750,7 @@ badparamcountkills:
 	if (do_nick_name(nick, IsServer(cptr)) == 0 ||
 	    (IsServer(cptr) && strcmp(nick, parv[1])))
 	    {
-		sendto_one(sptr, err_str(ERR_ERRONEOUSNICKNAME, parv[0]),
+		sendto_one(sptr, err_str(ERR_ERRONEUSNICKNAME, parv[0]),
 			   parv[1]);
 
 		if (IsServer(cptr))
@@ -918,28 +901,18 @@ badparamcountkills:
 	** same time, or net reconnecting) or just two net fragments becoming
 	** joined and having same nicks in use. We cannot have TWO users with
 	** same nick--purge this NICK from the system with a KILL... >;)
+	**
+	** The client indicated by 'acptr' is dead meat, give at least some
+	** indication of the reason why we are just dropping it cold.
 	*/
+	sendto_one(acptr, err_str(ERR_NICKCOLLISION, acptr->name),
+		   acptr->name, user, host);
 	/*
 	** This seemingly obscure test (sptr == cptr) differentiates
 	** between "NICK new" (TRUE) and ":old NICK new" (FALSE) forms.
 	*/
 	if (sptr == cptr)
 	    {
-		/*
-		** A new NICK being introduced by a neighbouring
-		** server (e.g. message type "NICK new" received)
-		*/
-		if (parc != 8)
-		{
-			/* Should never got here */
-			/* New NICK *must* have proper param count */
-			goto badparamcountkills;
-		}
-		/* The client indicated by 'acptr' is dead meat, give at least
-		** some indication of the reason why we are just dropping it cold.
-		*/
-		sendto_one(acptr, err_str(ERR_NICKCOLLISION, acptr->name),
-			acptr->name, user, host);
 		sendto_flag(SCH_KILL,
 			    "Nick collision on %s (%s@%s)%s <- (%s@%s)%s",
 			    acptr->name,
@@ -947,6 +920,10 @@ badparamcountkills:
 			    (acptr->user) ? acptr->user->host : "???",
 			    acptr->from->name,
 			    user, host, get_client_name(cptr, FALSE));
+		/*
+		** A new NICK being introduced by a neighbouring
+		** server (e.g. message type "NICK new" received)
+		*/
 		ircstp->is_kill++;
 		sendto_serv_butone(NULL, 
 				   ":%s KILL %s :%s ((%s@%s)%s <- (%s@%s)%s)",
@@ -969,31 +946,19 @@ badparamcountkills:
 	** must be killed from the incoming connection, and "old" must
 	** be purged from all outgoing connections.
 	*/
-	if (parc != 2)
-	{
-		/* Should never got here */
-		goto badparamcountkills;
-	}
-	/* The client indicated by 'acptr' is dead meat, give at least some
-	** indication of the reason why we are just dropping it cold.
-	*/
-	sendto_one(acptr, err_str(ERR_NICKCOLLISION, acptr->name),
-		acptr->name, user, host);
 	sendto_flag(SCH_KILL, "Nick change collision %s!%s@%s to %s %s <- %s",
 		    sptr->name, user, host, acptr->name, acptr->from->name,
 		    get_client_name(cptr, FALSE));
 	ircstp->is_kill++;
 	sendto_serv_butone(NULL, /* KILL old from outgoing servers */
-			   ":%s KILL %s :%s (%s@%s[%s](%s) <- %s@%s[%s])",
-			   ME, sptr->name, ME, acptr->user->username, 
-			   acptr->user->host, acptr->from->name, acptr->name,
-			   user, host, cptr->name);
+			   ":%s KILL %s :%s (%s(%s) <- %s)",
+			   ME, sptr->name, ME, acptr->from->name,
+			   acptr->name, get_client_name(cptr, FALSE));
 	ircstp->is_kill++;
 	sendto_serv_butone(NULL, /* Kill new from incoming link */
-		   ":%s KILL %s :%s (%s@%s[%s] <- %s@%s[%s](%s))",
-		   ME, acptr->name, ME, acptr->user->username,
-		   acptr->user->host, acptr->from->name,
-		   user, host, cptr->name, sptr->name);
+		   ":%s KILL %s :%s (%s <- %s(%s))",
+		   ME, acptr->name, ME, acptr->from->name,
+		   get_client_name(cptr, FALSE), sptr->name);
 	acptr->flags |= FLAGS_KILLED;
 	(void)exit_client(NULL, acptr, &me, "Nick collision(new)");
 	sptr->flags |= FLAGS_KILLED;
@@ -1005,10 +970,15 @@ nickkilldone:
 		char	*pv[7];
 
 		if (parc != 8)
-		{
-			/* New NICK *must* have proper param count */
-			goto badparamcountkills;
-		}
+		    {
+			sendto_flag(SCH_NOTICE,
+			    "Bad NICK param count (%d) for %s from %s via %s",
+				    parc, parv[1], sptr->name,
+				    get_client_name(cptr, FALSE));
+			sendto_one(cptr, ":%s KILL %s :%s (Bad NICK %d)",
+				   ME, nick, ME, parc);
+			return 0;
+		    }
 		/* A server introducing a new client, change source */
 		sptr = make_client(cptr);
 		add_client_to_list(sptr);
@@ -1038,10 +1008,9 @@ nickkilldone:
 					   err_str(ERR_RESTRICTED, nick));
 				return 2;
 			    }
-			/* Can the user speak on all channels? */
+			/* is the user banned on any channel ? */
 			for (lp = sptr->user->channel; lp; lp = lp->next)
-				if (can_send(sptr, lp->value.chptr) &&
-				    !IsQuiet(lp->value.chptr))
+				if (can_send(sptr, lp->value.chptr) ==MODE_BAN)
 					break;
 		}
 		/*
@@ -1492,124 +1461,68 @@ aClient *cptr, *sptr;
 int	parc;
 char	*parv[];
 {
-	aChannel *chptr;
+	Link	*lp;
+	aChannel *chptr, *mychannel;
+	char	*channame = NULL;
 	int	oper = parc > 2 ? (*parv[2] == 'o' ): 0; /* Show OPERS only */
 	int	penalty = 0;
-	char	*p, *mask, *channame;
+	char	*p, *mask;
 
 	if (parc < 2)
-	{
+	    {
 		who_find(sptr, NULL, oper);
 		sendto_one(sptr, rpl_str(RPL_ENDOFWHO, parv[0]), "*");
-		/* it was very CPU intensive */
-		return MAXPENALTY;
-	}
+		return 5;
+	    }
 
-	/* get rid of duplicates */
-	parv[1] = canonize(parv[1]);
-
-	for (p = NULL, mask = strtoken(&p, parv[1], ",");
-	    mask && penalty <= MAXPENALTY;
-		mask = strtoken(&p, NULL, ","))
-	{ 
+        for (p = NULL, mask = strtoken(&p, parv[1], ",");
+	     mask && penalty < MAXPENALTY;
+             mask = strtoken(&p, NULL, ","))
+	    { 
 		channame = NULL;
-		penalty += 1;
-
-		/* find channel user last joined, we might need it later */
-		if (sptr->user && sptr->user->channel)
-			channame = sptr->user->channel->value.chptr->chname;
-
-#if 0
-		/* I think it's useless --Beeth */
+		mychannel = NullChn;
 		clean_channelname(mask);
-#endif
-
-		/* simplify mask */
-		(void)collapse(mask);
-
+		if (sptr->user && (lp = sptr->user->channel))
+				mychannel = lp->value.chptr;
 		/*
-		** We can never have here !mask 
-		** or *mask == '\0', since it would be equal
-		** to parc == 1, that is 'WHO' and/or would not
-		** pass through above for loop.
+		**  Following code is some ugly hacking to preserve the
+		**  functions of the old implementation. (Also, people
+		**  will complain when they try to use masks like "12tes*"
+		**  and get people on channel 12 ;) --msa
 		*/
-		if (mask[1] == '\0' && mask[0] == '0')
-		{
-			/*
-			** 'WHO 0' - do who_find() later
-			*/
+		if (!mask || *mask == '\0') /* !mask always false? */
 			mask = NULL;
-			channame = NULL;
-		}
 		else if (mask[1] == '\0' && mask[0] == '*')
-		{
-			/*
-			** 'WHO *'
-			** If user was on any channel, list the one
-			** he joined last.
-			*/
+		    {
 			mask = NULL;
-		}
+			if (mychannel)
+				channame = mychannel->chname;
+		    }
+		else if (mask[1] == '\0' && mask[0] == '0')
+			/* "WHO 0" for irc.el */
+			mask = NULL;
 		else
-		{
-			/*
-			** Try if mask was channelname and if yes, do
-			** who_channel, else if mask was nick, do who_one.
-			** Else do horrible who_find()
-			*/
 			channame = mask;
-		}
+		(void)collapse(mask);
 		
 		if (IsChannelName(channame))
-		{
+		    {
 			chptr = find_channel(channame, NULL);
 			if (chptr)
-			{
 				who_channel(sptr, chptr, oper);
-			}
-			else
-			{
-				/*
-				** 'WHO #nonexistant'.
-				*/
-				penalty += 1;
-			}
-		}
+			penalty += 1;
+		    }
 		else 
-		{
-			aClient	*acptr = NULL;
-
-			if (mask)
-			{
-				/*
-				** Here mask can be NULL. It doesn't matter,
-				** since find_client would return NULL.
-				** Just saving one function call. ;)
-				*/
-				acptr = find_client(mask, NULL);
-				if (acptr && !IsClient(acptr))
-				{
-					acptr = NULL;
-				}
-			}
-			if (acptr)
-			{
-				/* We found client, so send WHO for it */
-				who_one(sptr, acptr, NULL, NULL);
-			}
+		    {
+			who_find(sptr, mask, oper);
+			if (mask && (int)strlen(mask) > 4)
+				penalty += 3;
 			else
-			{
-				/*
-				** All nice chances lost above. 
-				** We must hog our server with that.
-				*/
-				who_find(sptr, mask, oper);
-				penalty += MAXPENALTY;
-			}
-		}
+				penalty += 5;
+		    }
 		sendto_one(sptr, rpl_str(RPL_ENDOFWHO, parv[0]),
 			   BadPtr(mask) ?  "*" : mask);
-	}
+	    }
 	return penalty;
 }
 
@@ -1711,7 +1624,7 @@ char	*parv[];
 	Link	*lp;
 	aClient *acptr;
 	aChannel *chptr;
-	char	*nick, *tmp, *tmp2;
+	char	*nick, *tmp;
 	char	*p = NULL;
 	int	found = 0;
 
@@ -1729,19 +1642,18 @@ char	*parv[];
 		parv[1] = parv[2];
 	    }
 
-	tmp = mystrdup(parv[1]);
+	parv[1] = canonize(parv[1]);
 
-	for (tmp2 = canonize(tmp); (nick = strtoken(&p, tmp2, ",")); 
-		tmp2 = NULL)
+	for (tmp = parv[1]; (nick = strtoken(&p, tmp, ",")); tmp = NULL)
 	    {
 		int	invis, showperson, member, wilds;
 
 		found &= 0x0f;	/* high/boolean, low/counter */
 		(void)collapse(nick);
 		wilds = (index(nick, '?') || index(nick, '*'));
-		/*
+                /*
 		 * We're no longer allowing remote users to generate
-		 * requests with wildcard, nor local users with more
+                 * requests with wildcard, nor local users with more
 		 * than one wildcard target per command.
 		 * Max 3 targets per command allowed.
 		 */
@@ -1819,8 +1731,6 @@ char	*parv[];
 			p[-1] = ',';
 	    }
 	sendto_one(sptr, rpl_str(RPL_ENDOFWHOIS, parv[0]), parv[1]);
-
-	MyFree(tmp);
 
 	return 2;
 }
@@ -1965,14 +1875,6 @@ user_finish:
 	return 2;
 }
 
-
-int	m_post(aClient *cptr, aClient *sptr, int parc, char *parv[])
-{
-	sendto_flag(SCH_LOCAL, "Denied http-post connection from %s.",
-		cptr->sockhost);
-	m_quit(cptr, sptr, parc, parv);
-}
-
 /*
 ** m_quit
 **	parv[0] = sender prefix
@@ -1983,19 +1885,15 @@ aClient *cptr, *sptr;
 int	parc;
 char	*parv[];
     {
-	static char comment[TOPICLEN+1];
+	static	char	quitc[] = "I Quit";
+	register char *comment = (parc > 1 && parv[1]) ? parv[1] : quitc;
 
 	if (MyClient(sptr) || MyService(sptr))
-	{
-		(void) snprintf(comment, TOPICLEN, "\"%s",
-			(parc > 1 && parv[1]) ? parv[1] : "");
-		(void) strcat(comment, "\"");
-	}
-	else
-	{
-		(void) snprintf(comment, TOPICLEN + 1, "%s",
-			(parc > 1 && parv[1]) ? parv[1] : "");
-	}
+		if (!strncmp("Local Kill", comment, 10) ||
+		    !strncmp(comment, "Killed", 6))
+			comment = quitc;
+	if (strlen(comment) > (size_t) TOPICLEN)
+		comment[TOPICLEN] = '\0';
 	return IsServer(sptr) ? 0 : exit_client(cptr, sptr, sptr, comment);
     }
 
@@ -2293,7 +2191,7 @@ char	*parv[];
 		acptr = find_server(origin, NULL);
 	if (!acptr || acptr != sptr)
 		origin = cptr->name;
-	if (!BadPtr(destination) && match(destination, ME) != 0)
+	if (!BadPtr(destination) && mycmp(destination, ME) != 0)
 	    {
 		if ((acptr = find_server(destination, NULL)))
 			sendto_one(acptr,":%s PING %s :%s", parv[0],
@@ -2370,6 +2268,10 @@ char	*parv[];
     {
 	aConfItem *aconf;
 	char	*name, *password, *encr;
+#ifdef CRYPT_OPER_PASSWORD
+	char	salt[3];
+	extern	char *crypt();
+#endif /* CRYPT_OPER_PASSWORD */
 
 	name = parc > 1 ? parv[1] : NULL;
 	password = parc > 2 ? parv[2] : NULL;
@@ -2402,25 +2304,41 @@ char	*parv[];
 			sendto_one(sptr, rpl_str(RPL_YOUREOPER, parv[0]));
 		return 1;
 	    }
-	if (!(aconf = find_Oline(name, sptr)))
+	if (!(aconf = find_conf_exact(name, sptr->username, sptr->sockhost,
+				      CONF_OPS)) &&
+	    !(aconf = find_conf_exact(name, sptr->username,
+#ifdef INET6
+				      (char *)inetntop(AF_INET6,
+						       (char *)&cptr->ip,
+						       mydummy, MYDUMMY_SIZE),
+#else
+				      (char *)inetntoa((char *)&cptr->ip),
+#endif
+				      CONF_OPS)))
 	    {
 		sendto_one(sptr, err_str(ERR_NOOPERHOST, parv[0]));
 		return 1;
 	    }
 #ifdef CRYPT_OPER_PASSWORD
-	/* pass whole aconf->passwd as salt, let crypt() deal with it */
+	/* use first two chars of the password they send in as salt */
 
+	/* passwd may be NULL. Head it off at the pass... */
+	salt[0] = '\0';
 	if (password && aconf->passwd)
 	    {
-		extern	char *crypt();
-
-		encr = crypt(password, aconf->passwd);
-		if (encr == NULL)
+		/* Determine if MD5 or DES */
+		if (strncmp(aconf->passwd, "$1$", 3))
 		    {
-			sendto_flag(SCH_ERROR, "crypt() returned NULL");
-			sendto_one(sptr,err_str(ERR_PASSWDMISMATCH, parv[0]));
-			return 3;
+			salt[0] = aconf->passwd[0];
+			salt[1] = aconf->passwd[1];
 		    }
+		else
+		    {
+			salt[0] = aconf->passwd[3];
+			salt[1] = aconf->passwd[4];
+		    }
+		salt[2] = '\0';
+		encr = crypt(password, salt);
 	    }
 	else
 		encr = "";
@@ -2461,7 +2379,7 @@ char	*parv[];
 		       parv[0], sptr->user->username, sptr->user->host,
 		       sptr->auth, IsUnixSocket(sptr) ? sptr->sockhost :
 #ifdef INET6
-                       inet_ntop(AF_INET6, (char *)&sptr->ip, mydummy, MYDUMMY_SIZE));
+                       inet_ntop(AF_INET6, (char *)&sptr->ip), mydummy, MYDUMMY_SIZE);
 #else
                        inetntoa((char *)&sptr->ip));
 #endif
@@ -2505,7 +2423,7 @@ char	*parv[];
 #ifdef	USE_SERVICES
 		check_services_butone(SERVICE_WANT_OPER, sptr->user->server, 
 				      sptr, ":%s MODE %s :+%c", parv[0],
-				      parv[0], IsOper(sptr) ? 'o' : 'O');
+				      parv[0], IsOper(sptr) ? 'O' : 'o');
 #endif
 		if (IsAnOper(sptr))
 			istat.is_oper++;
@@ -2542,15 +2460,6 @@ char	*parv[];
 		sendto_one(cptr, err_str(ERR_NEEDMOREPARAMS, parv[0]), "PASS");
 		return 1;
 	    }
-	strncpyzt(cptr->passwd, password, sizeof(cptr->passwd));
-	if (cptr->user || cptr->service)
-	{
-		/* If we have one of these structures allocated, it means
-		** that PASS was issued after USER or SERVICE. No need to
-		** copy PASS parameters to info field, then. */
-		return 1;
-	}
-
 	/* Temporarily store PASS pwd *parameters* into info field */
 	if (parc > 2 && parv[2])
 	    {
@@ -2569,6 +2478,7 @@ char	*parv[];
 			MyFree(cptr->info);
 		cptr->info = mystrdup(buf);
 	    }
+	strncpyzt(cptr->passwd, password, sizeof(cptr->passwd));
 	return 1;
     }
 
@@ -2648,7 +2558,7 @@ char	*parv[];
 {
 	Reg	aClient *acptr;
 	Reg	char	*s, **pav = parv;
-	Reg	int	len = 0, i;
+	Reg	int	len = 0;
 	char	*p = NULL;
 
 	if (parc < 2)
@@ -2663,14 +2573,8 @@ char	*parv[];
 	for (s = strtoken(&p, *++pav, " "); s; s = strtoken(&p, NULL, " "))
 		if ((acptr = find_person(s, NULL)))
 		    {
-			i = strlen(acptr->name);
-			if (len + i > sizeof(buf) - 4)	
-			{
-				/* leave room for " \r\n\0" */
-				break;
-			}
 			(void) strcpy(buf + len, acptr->name);
-			len += i;
+			len += strlen(acptr->name);
 			(void) strcpy(buf + len++, " ");
 		    }
 	sendto_one(sptr, "%s", buf);
@@ -2813,7 +2717,8 @@ char	*parv[];
 		if (!(setflags & FLAGS_OPER) && IsOper(sptr) &&
 		    !IsServer(cptr))
 			ClearOper(sptr);
-		if (!(setflags & FLAGS_LOCOP) && IsLocOp(sptr))
+		if (!(setflags & FLAGS_LOCOP) && IsLocOp(sptr) &&
+		    !IsServer(cptr))
 			sptr->user->flags &= ~FLAGS_LOCOP;
 		if ((setflags & FLAGS_RESTRICTED) &&
 		    !(sptr->user->flags & FLAGS_RESTRICTED))

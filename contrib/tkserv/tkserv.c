@@ -3,11 +3,11 @@
 **
 ** Copyright (c) 1998 Kaspar 'Kasi' Landsberg, <kl@berlin.Snafu.DE> 
 **
-** File     : tkserv.c v1.3.6
+** File     : tkserv.c v1.2
 ** Author   : Kaspar 'Kasi' Landsberg, <kl@snafu.de>
 ** Desc.    : Temporary K-line Service.
 **            For further info see the README file.
-** Location : http://www.snafu.de/~kl/tkserv/
+** Location : http://www.snafu.de/~kl/tkserv
 ** Usage    : tkserv <server> <port>
 ** E.g.     : tkserv localhost 6667
 **
@@ -23,10 +23,6 @@
 **       Thanks to both. =)
 **
 ** PS: Casting rules the world! (doh)
-** 
-** INET6 and fprintf() bug fixes by mro - 20000828
-** some buffer overflows fixes and general cleanup by Beeth -- 20010307
-** 
 */
 
 #include "os.h"
@@ -48,9 +44,10 @@
 #define TKS_MAXARGS 250
 
 /* The version information */
-#define TKS_VERSION "Hello, i'm TkServ v1.3.6."
+#define TKS_VERSION "Hello, i'm TkServ v1.2."
 
 static char *nuh;
+FILE *tks_logf;
 int fd = -1, tklined = 0;
 
 /*
@@ -71,7 +68,7 @@ char *tks_ts(void)
     /* Convert it to local time representation */
     loctime = localtime(&now);
     
-    strftime(tempus, 256, "[%H:%M] %m/%d", loctime);
+    strftime(tempus, 256, "@%H:%M %m/%d", loctime);
 
     return(tempus);
 }
@@ -81,21 +78,17 @@ void tks_log(char *text, ...)
 {
     char txt[TKS_MAXBUFFER];
     va_list va;
-    FILE *tks_logf;
 
     tks_logf = fopen(TKSERV_LOGFILE, "a");
     va_start(va, text);
     vsprintf(txt, text, va);
 
     if (tks_logf != NULL)
-    {
         fprintf(tks_logf, "%s %s\n", txt, tks_ts());
-    }
     else
     {
         perror(TKSERV_LOGFILE);
         va_end(va);
-
         return;
     }
 
@@ -146,14 +139,6 @@ void sendto_user(char *text, ...)
     vsprintf(txt, text, va);
     sendto_server("NOTICE %s :%s\n", nick, txt);
     va_end(va);
-    free(nick);
-}
-
-/* tells the user how to use the TKLINE command */
-void usage()
-{
-    sendto_user("Usage: TKLINE <password> <lifetime> <user@host> <reason>");
-    sendto_user("       TKLINE <password> -1         <user@host>");
 }
 
 void process_server_output(char *line)
@@ -170,19 +155,14 @@ void process_server_output(char *line)
         line = ptr + 1;
     }
 
-    if (argc < TKS_MAXARGS)
-    {
-        args[argc++] = line;
-    }
+    args[argc] = line;
 
-    for (i = argc; i < TKS_MAXARGS; i++)
-    {
+    for (i = argc + 1; i < TKS_MAXARGS; i++)
         args[i] = "";
-    }
 
     /* 
     ** After successfull registering, backup the ircd.conf file
-    ** and set the perms of the log file -- the easy way.
+    ** and set the perms of the log file -- the easy way :)
     */
     if ((*args[0] == ':') && (!strcmp(args[1], "SERVSET")))
     {
@@ -194,19 +174,13 @@ void process_server_output(char *line)
         
     /* We do only react upon PINGs, SQUERYs and &NOTICES */
     if (!strcmp(args[0], "PING"))
-    {
         service_pong();
-    }
 
     if ((*args[0] == ':') && (!strcmp(args[1], "SQUERY")))
-    {
         service_squery(args);
-    }
     
     if (!strcmp(args[0], "&NOTICES"))
-    {
         service_notice(args);
-    }
 } 
 
 /* reformats the server output */
@@ -217,45 +191,31 @@ void parse_server_output(char *buffer)
 
     /* server sent an empty line, so just return */
     if (!buffer && !*buffer)
-    {
         return;
-    }
 
     while ((ch = (char *) strchr(buffer, '\n')))
     {
         *ch = '\0';
 
         if (*(ch - 1) == '\r')
-        {
             *(ch - 1) == '\0';
-        }
 
         sprintf(buf, "%s%s", tmp, buffer);
-
         *tmp = '\0';
-
         process_server_output(buf);
-
         buffer = ch + 1;
     }
 
     if (*buffer)
-    {
         strcpy(tmp, buffer);
-    }
 }
 
 /* reads and returns output from the server */
 int server_output(int fd, char *buffer)
 {
-    int n;
+    int n     = read(fd, buffer, TKS_MAXBUFFER);
+    buffer[n] = '\0';
     
-    n = read(fd, buffer, TKS_MAXBUFFER);
-    if (n>0)
-    {
-        buffer[n] = '\0';
-    }
-
 #ifdef TKSERV_DEBUG
     printf("%s", buffer);
 #endif
@@ -268,20 +228,14 @@ int is_opered(void)
 {
     char *nick, *ch, *token, *u_num, *userh;
     char buffer[TKS_MAXBUFFER];
-    int retv = 0;
 
     nick = (char *) strdup(nuh);
     ch   = (char *) strchr(nick, '!');
     *ch  = '\0';
-
     sendto_server("USERHOST %s\n", nick);
 
     /* get the USERHOST reply (hopefully) */
-    if (server_output(fd, buffer) < 0)
-    {
-        free(nick);
-        return(0);  /* read() error */
-    }
+    server_output(fd, buffer);
 
     token = (char *) strtok(buffer, " ");
     token = (char *) strtok(NULL,   " ");
@@ -305,38 +259,28 @@ int is_opered(void)
             new_uh = (char *) (strchr(userh, '=') + 2);
 
             if (ch = (char *) strchr(new_uh, '\r'))
-            {
                 *ch = '\0';
-            }
 
             /* Does the u@h of the USERHOST reply correspond to the u@h of our origin? */
             if (!strcmp(old_uh, new_uh))
-            {
-                retv = 1;
-            }
+                return(1);
             else 
-            {
                 /* 
-                ** race condition == we sent a USERHOST request and got the 
-                ** USERHHOST reply, but this reply doesn't correspond to our origin
-                ** of the SQUERY -- this should never happen (but never say never ;)
+                ** race condition == we sent a USERHOST request and got the USERHHOST reply,
+                ** but this reply doesn't correspond to our origin of the SQUERY --
+                ** this should never happen (but never say never ;)
                 */
                 sendto_user("A race condition has occured -- please try again.");
-            }
         }
     }
     else
-    {
         /*
         ** race condition == we sent a USERHOST request but the next message from
         ** the server was not a USERHOST reply (usually due to lag)
         */
         sendto_user("A race condition has occured -- please try again (and ignore the following error message).");
-    }
-    free(nick);
-    free(u_num);
-    free(userh);
-    return(retv);
+
+    return(0);
 }
 
 /* 
@@ -346,7 +290,6 @@ int is_opered(void)
 int must_be_opered()
 {
     FILE *fp;
-    int retv = 1;
 
     /* if the access file exists, check for auth */
     if ((fp = fopen(TKSERV_ACCESSFILE, "r")) != NULL)
@@ -356,203 +299,129 @@ int must_be_opered()
 
         while (fgets(buffer, TKS_MAXBUFFER, fp))
         {
-            uh    = (char *) (strchr(nuh, '!') + 1);
-            token = (char *) strtok(buffer, " ");
+            uh         = (char *) (strchr(nuh, '!') + 1);
+            token      = (char *) strtok(buffer, " ");
 
             if (token)
-            {
                 access_uh  = (char *) strdup(token);
-                if (access_uh)
-                {
-                    /* check for access file corruption */
-                    if (*access_uh == '\0')
-                    {
-                        tks_log("Corrupt access file. RTFM. :-)");
-                        /* if access file is corrupted, better safe than sorry --B.*/
-                        retv = 1;
-                    }
-                    /* do we need an oper? */
-                    if (*access_uh == '!' &&
-                       !fnmatch((char *) (strchr(access_uh, '!') + 1), uh, 0))
-                    {
-                        retv = 0;
-                    }
-                    free(access_uh);
-                }
+                
+            /* check for access file corruption */
+            if (!access_uh)
+            {
+                tks_log("Corrupt access file. RTFM. :-)");
+
+                return(0);
+            }
+
+			/* do we need an oper? */
+            if (*access_uh == '!')
+            {
+                if (!fnmatch((char *) (strchr(access_uh, '!') + 1), uh, 0))
+                    return(0);
             }
         }
-        fclose(fp);
     }
     else
-    {
         tks_log("%s not found.", TKSERV_ACCESSFILE);
-    }
-    return(retv);
+
+    return(1);
 }
 
 /* check whether origin is authorized to use the service */
 int is_authorized(char *pwd, char *host)
 {
-
-#ifdef CRYPTDES
-    char *pwdtmp;
-    char salt[3];
-#endif
     FILE *fp;
-    char buffer[TKS_MAXBUFFER];
-    char *access_uh, *access_pwd;
-    char *token, *uh, *ch, *tlds = NULL;
-    int retv = 0; /* 0 not authorized (perhaps *yet*); negative: errors */
 
     /* if the access file exists, check for authorization */
     if ((fp = fopen(TKSERV_ACCESSFILE, "r")) != NULL)
     {
-        while ((retv == 0) && fgets(buffer, TKS_MAXBUFFER, fp))
+        char buffer[TKS_MAXBUFFER];
+        char *access_uh, *access_pwd;
+        char *token, *uh, *ch, *tlds = NULL;
+
+        while (fgets(buffer, TKS_MAXBUFFER, fp))
         {
-            uh    = (char *) (strchr(nuh, '!') + 1);
-            token = (char *) strtok(buffer, " ");
+            uh         = (char *) (strchr(nuh, '!') + 1);
+            token      = (char *) strtok(buffer, " ");
 
             if (token)
-            {
                 access_uh  = (char *) strdup(token);
-                if (access_uh == NULL)
-                {
-                    retv = -2;
-                }
-                else if (*access_uh == '!')
-                {
-                    access_uh++;
-                }
-            }
+                
+            if (*access_uh == '!')
+                access_uh = (char *) (strchr(access_uh, '!') + 1);
 
             token = (char *) strtok(NULL, " ");
 
-            if ((retv == 0) && token)
-            {
+            if (token)
                 access_pwd = (char *) strdup(token);
-                if (access_pwd == NULL)
-                {
-                    retv = -2;
-                }
-#ifdef CRYPTDES
-                salt[0] = access_pwd[0];
-                salt[1] = access_pwd[1];
-                salt[2] = '\0';
-#endif
-            }
 
             token = (char *) strtok(NULL, " ");
 
-            if ((retv == 0) && token)
-            {
+            if (token)
                 tlds   = (char *) strdup(token);
-                if (tlds == NULL)
-                {
-                    retv = -2;
-                }
-            }
-            else if (ch = (char *) strchr(access_pwd, '\n'))
-            {
-                *ch = '\0';
-            }
+            else
+                if (ch = (char *) strchr(access_pwd, '\n'))
+                    *ch = '\0';
 
             /* check for access file corruption */
-            if (!*access_uh || !*access_pwd)
+            if (!access_uh || !access_pwd)
             {
-                retv = -3;
+                tks_log("Corrupt access file. RTFM. :-)");
+
+                return(0);
             }
 
             /* check uh, pass and TLD */
             if (!fnmatch(access_uh, uh, 0))
-            {
-#ifdef CRYPTDES
-                pwdtmp = crypt(pwd, salt);
-                if (pwdtmp && !strcmp(pwdtmp, access_pwd))
-#else
                 if (!strcmp(pwd, access_pwd))
-#endif
-                {
                     if (!tlds)
-                    {
-                        retv = 1; /* no tlds, user has no limits */
-                    }
+                        return(1);
                     else
                     {
                         char *token, *ch;
-                        int negate = 0;
 
+                        /* blah */
                         if (ch = (char *) strchr(tlds, '\n'))
-                        {
                             *ch = '\0';
-                        }
 
                         token = (char *) strtok(tlds, ",");
 
                         /* '!' negates the given host/domain -> not allowed to tkline */
                         if (*token == '!')
                         {
-                            token++;
-                            negate = 1;
+                            if (!fnmatch(((char *) strchr(token, '!') + 1), host, 0))
+                            {
+                                sendto_user("You are not allowed to tkline \"%s\",", host);
+                                return(0);
+                            }
                         }
-                        if (!fnmatch(token, host, 0))
-                        {
-                            retv = negate ? -1 : 1;
-                        }
+                        else if (!fnmatch(token, host, 0))
+                            return(1);
 
                         /* walk thru the list */
-                        while ((retv == 0) && (token = (char *) strtok(NULL, ",")))
+                        while (token = (char *) strtok(NULL, ","))
                         {
                             if (*token == '!')
                             {
-                                token++;
-                                negate = 1;
+                                if (!fnmatch((char *) (strchr(token, '!') + 1), host, 0))
+                                {
+                                    sendto_user("You are not allowed to tkline \"%s\",", host);
+                                    return(0);
+                                }
                             }
-                            if (!fnmatch(token, host, 0))
-                            {
-                                retv = negate ? -1 : 1;
-                            }
+                            else if (!fnmatch(token, host, 0))
+                                return(1);
                         }
-                    } /* !tlds */
-                }
-                else
-                {
-                /* wrong password. log it? */
-                }
-            }
-            else
-            {
-            /* wrong uh. log it? */
-            }
-        } /* EOF fp */
+                        
+                        sendto_user("You are not allowed to tkline \"%s\".", host);
+                    }
+        }
+
     }
     else
-    {
-        retv = -4; /* could not open file */
-    }
+        tks_log("%s not found.", TKSERV_ACCESSFILE);
 
-    if (fp)
-        fclose(fp);
-    if (access_uh)
-        free(access_uh);
-    if (access_pwd)
-        free(access_pwd);
-    if (tlds)
-        free(tlds);
-    switch (retv)
-    {
-        case -4:
-            tks_log("%s not found.", TKSERV_ACCESSFILE); break;
-        case -3:
-            tks_log("Corrupted access file. RTFM. :-)"); break;
-        case -2:
-	        tks_log("Out of memory."); break;
-        case -1:
-            sendto_user("You are not allowed to tkline \"%s\".", host); break;
-        default:
-    }
-
-    retv = retv < 0 ? 0 : retv;    /* errors do not allow authorization */
-    return(retv);
+    return(0);
 }
 
 /*************** ircd.conf section ****************/
@@ -567,27 +436,17 @@ int add_tkline(char *host, char *user, char *reason, int lifetime)
         time_t now;
 
         now = time(NULL);
-
-#ifdef INET6
-        fprintf(iconf, "K%%%s%%%s%%%s%%0 # %d %u tkserv\n", host, reason, user, lifetime, now);
-#else
-        fprintf(iconf, "K:%s:%s:%s:0 # %d %u tkserv\n", host, reason, user, lifetime, now);
-#endif
+        fprintf(iconf, "K:%s:%s:%s:0 # %d %u tkserv\n", 
+                host, reason, user, lifetime, now);
         fclose(iconf);
         rehash(1);
-#ifdef INET6
-        tks_log("K%%%s%%%s%%%s%%0 added for %d hour(s) by %s.",
-#else
         tks_log("K:%s:%s:%s:0 added for %d hour(s) by %s.",
-#endif
             host, reason, user, lifetime, nuh);
 
         return(1);
     }
     else
-    {
         tks_log("Couldn't write to "CPATH);
-    }
 
     return(0);
 }
@@ -612,12 +471,7 @@ int check_tklines(char *host, char *user, int lifetime)
         while (fgets(buffer, TKS_MAXBUFFER, iconf))
         {
             if ((*buffer != 'K') || (!strstr(buffer, "tkserv")))
-            {
-                /* buffer could contain %s,%d etc..., expecially with IPv6
-                ** style config - mro
-                */
-                fputs(buffer, iconf_tmp);
-            }
+                fprintf(iconf_tmp, buffer);
             else
             {
                 /*
@@ -631,24 +485,13 @@ int check_tklines(char *host, char *user, int lifetime)
                     char buf[TKS_MAXBUFFER];
 
                     strcpy(buf, buffer);
-
-#ifdef INET6
-                    token = (char *) strtok(buf, "%");
-                    token = (char *) strtok(NULL, "%");
-#else
                     token = (char *) strtok(buf, ":");
                     token = (char *) strtok(NULL, ":");
-#endif
                     
                     if (!strcasecmp(token, host))
                     {
-#ifdef INET6
-                        token = (char *) strtok(NULL, "%");
-                        token = (char *) strtok(NULL, "%");
-#else
                         token = (char *) strtok(NULL, ":");
                         token = (char *) strtok(NULL, ":");
-#endif
                         
                         if (!strcasecmp(token, user))
                         {
@@ -656,14 +499,10 @@ int check_tklines(char *host, char *user, int lifetime)
                             found = 1;
                         }
                         else
-                        {
-                            fputs(buffer, iconf_tmp);
-                        }
+                            fprintf(iconf_tmp, buffer);
                     }
                     else
-                    {
-                        fputs(buffer, iconf_tmp);
-                    }
+                        fprintf(iconf_tmp, buffer);
                 }
                 else
                 {
@@ -672,7 +511,6 @@ int check_tklines(char *host, char *user, int lifetime)
                     unsigned long int lifetime, then;
                 
                     strcpy(buf, buffer);
-
                     ch       = (char *) strrchr(buf, '#');
                     token    = (char *) strtok(ch, " ");
                     token    = (char *) strtok(NULL, " ");
@@ -681,13 +519,9 @@ int check_tklines(char *host, char *user, int lifetime)
                     then     = strtoul(token, NULL, 0);
             
                     if (!(((now - then) / (60 * 60)) >= lifetime))
-                    {
-                        fputs(buffer, iconf_tmp);
-                    }
+                        fprintf(iconf_tmp, buffer);
                     else
-                    {
                         found = 1;
-                    }
                 }
             }
         }
@@ -698,26 +532,21 @@ int check_tklines(char *host, char *user, int lifetime)
         unlink(TKSERV_IRCD_CONFIG_TMP);
         
         if (found)
-        {
             rehash(-1);
-        }
+
         return(count);
     }
     else
-    {
         tks_log("Error while checking for expired tklines...");
-    }
 }
 
 /* reloads the ircd.conf file  -- the easy way */
 void rehash(int what)
 {
     exec_cmd("kill -HUP `cat "PPATH"`");
-
+ 
     if (what != -1)
-    {
         tklined = what;
-    }
 }
 
 /*************** end of ircd.conf section **************/
@@ -753,13 +582,11 @@ void service_squery(char **args)
 {
     char *cmd, *ch;
 
-    nuh = (char *) strdup(args[0] + 1);
-    cmd = (char *) strdup(args[3] + 1);
+    nuh  = (char *) strdup(args[0] + 1);
+    cmd  = (char *) strdup(args[3] + 1);
  
     if (ch = (char *) strchr(cmd, '\r'))
-    {
         *ch = '\0';
-    }
 
     if (!strcasecmp(cmd, "admin"))
     {
@@ -767,32 +594,27 @@ void service_squery(char **args)
         sendto_user(TKSERV_ADMIN_CONTACT);
         sendto_user(TKSERV_ADMIN_OTHER);
     }
+
     else if (!strcasecmp(cmd, "help"))
-    {
         squery_help(args);
-    }
+
     else if (!strcasecmp(cmd, "info"))
     {
         sendto_user("This service is featuring temporary k-lines.");
-        sendto_user("It's available at http://www.snafu.de/~kl/tkserv/.");
+        sendto_user("It's available at http://www.snafu.de/~kl/tkserv.");
     }
+
     else if (!strcasecmp(cmd, "quit"))
-    {
         squery_quit(args);
-    }
+
     else if (!strcasecmp(cmd, "tkline"))
-    {
         squery_tkline(args);
-    }
+
     else if (!strcasecmp(cmd, "version"))
-    {
         sendto_user(TKS_VERSION);
-    }
+        
     else
-    {
-        sendto_user("Unknown command. Try HELP.");
-    }
-    free(cmd);
+    	sendto_user("Unknown command. Try HELP.");
 }
 
 /* SQUERY HELP */
@@ -805,24 +627,16 @@ void squery_help(char **args)
     if (help_about && *help_about)
     {
         if (ch = (char *) strchr(help_about, '\r'))
-        {
             *ch = '\0';
-        }
 
         if (!strcasecmp(help_about, "admin"))
-        {
             sendto_user("ADMIN shows you the administrative info for this service.");
-        }
 
         if (!strcasecmp(help_about, "help"))
-        {
             sendto_user("HELP <command> shows you the help text for <command>.");
-        }
 
         if (!strcasecmp(help_about, "info"))
-        {
             sendto_user("INFO shows you a short description about this service.");
-        }
 
         if (!strcasecmp(help_about, "tkline"))
         {
@@ -831,9 +645,7 @@ void squery_help(char **args)
         }
         
         if (!strcasecmp(help_about, "version"))
-        {
             sendto_user("VERSION shows you the version information of this service.");
-        }
     }
     else
     {
@@ -860,32 +672,13 @@ void squery_tkline(char **args)
         }
     }
     
-    /* Make sure we have at least the minimum of necessary arguments */
-    if (!(args[6] && *args[6]))
-    {
-        usage();
-        return;
-    }
-
-    /* 
-    ** args[5] is the first of the relevant arguments (after the password).
-    ** (The password is always the first argument after TKLINE.)
-    */
     i = 5;
 
     while (args[i] && *args[i])
     {
-#ifdef INET6
-        if (strchr(args[i], '%'))
-#else
         if (strchr(args[i], ':'))
-#endif
         {
-#ifdef INET6
-            sendto_user("Percent signs are only allowed in the password.");
-#else
             sendto_user("Colons are only allowed in the password.");
-#endif
             return;
         }
 
@@ -895,37 +688,41 @@ void squery_tkline(char **args)
     if (args[5] && *args[5])
     {
         if (isdigit(*args[5]) || (*args[5] == '-'))
-        {
             lifetime = atoi(args[5]);
-        }
         else
         {
-            usage();
+            sendto_user("The lifetime may only contain digits.");
             return;
         }
+    }
+    else
+    {
+        sendto_user("Usage: TKLINE <password> [<lifetime>] <u@h> <reason>");
+        return;
     }
 
     /* TKLINE <pass> <lifetime> <u@h> <reason> */
     if ((lifetime > 0) && !(args[7] && *args[7]))
     {
-        usage();
+        sendto_user("Usage: TKLINE <password> <lifetime> <u@h> <reason>");
+        return;
+    }
+
+    /* TKLINE <pass> <u@h> <reason> (default expiration) */
+    if ((lifetime == 0) && !(args[6] && *args[6]))
+    {
+        sendto_user("Usage: TKLINE <password> <u@h> <reason>");
         return;
     }
 
     /* TKLINE <pass> -1 <u@h> (removal of tklines) */
     if ((lifetime == -1) && !(args[6] && *args[6]))
     {
-        usage();
+        sendto_user("Usage: TKLINE <password> -1 <u@h>");
         return;
     }
-
-    /*
-    ** A lifetime of -1 means that user wants to remove a tkline.
-    ** A lifetime between 1 and 768 means the user wants to add a tkline.
-    ** Any other value for the lifetime means the user didnt RTFM and is
-    ** rejected.
-    */
-    if ((lifetime >= 768) || (lifetime < -1) || (lifetime == 0))
+        
+    if ((lifetime >= 768) || (lifetime < -1))
     {
         sendto_user("<lifetime> must be greater than 0 and less than 768.");
         return;
@@ -933,13 +730,11 @@ void squery_tkline(char **args)
 
     /* I don't want to get confused, so all this may be a bit redundant */
 
-    /* User wants to add tkline(s). */
     if (lifetime > 0)
     {
-        passwd  = args[4];
-        pattern = args[6];
-        strncpy(reason, args[7], TKS_MAXKILLREASON-1);
-        reason[TKS_MAXKILLREASON-1] = '\0';
+        passwd   = args[4];
+        pattern  = args[6];
+        strcpy(reason, args[7]);
         i = 8;
 
         /* I know... */
@@ -951,21 +746,44 @@ void squery_tkline(char **args)
         }
         
         if (ch = (char *) strchr(reason, '\r'))
-        {
-            *ch = '\0';
-        }
+            *ch = '\0';        
     }
     
+    if (lifetime == 0)
+    {
+        if (!(strchr(args[5], '@') || strchr(args[5], '*') ||
+              strchr(args[5], '.')))
+        {
+            sendto_user("<lifetime> must be greater than 0.");
+            return;
+        }
+
+        passwd   = args[4];
+        lifetime = 2; /* Default lifetime */
+        pattern  = args[5];
+        strcpy(reason, args[6]);
+        i = 7;
+
+        while(args[i] && *args[i])
+        {
+            strncat(reason, " ", TKS_MAXKILLREASON - strlen(reason) - 1);
+            strncat(reason, args[i], TKS_MAXKILLREASON - strlen(reason) - 1);
+            i++;
+        }
+        
+        if (ch = (char *) strchr(reason, '\r'))
+            *ch = '\0';        
+    }
+
     if (lifetime == -1)
     {
         passwd  = args[4];
         pattern = args[6];
 
         if (ch = (char *) strchr(pattern, '\r'))
-        {
             *ch = '\0';
-        }
     }
+
 
     /* Don't allow "*@*" and "*" in the pattern */
     if (!strcmp(pattern, "*@*") || !strcmp(pattern, "*"))
@@ -983,9 +801,7 @@ void squery_tkline(char **args)
         *ch  = '\0';
     }
     else /* user defaults to "*" */
-    {
         host = pattern;
-    }
 
     /*
     ** Make sure there's a dot in the hostname.
@@ -999,7 +815,7 @@ void squery_tkline(char **args)
         sendto_user("The hostname must contain at least one dot.");
         return;
     }
-
+    
     if (!is_authorized(passwd, host))
     {
         sendto_user("Authorization failed.");
@@ -1011,23 +827,18 @@ void squery_tkline(char **args)
         int i;
 
         i = check_tklines(host, user, lifetime);
-
-        sendto_user("%d tkline%s for \"%s@%s\" found.", i, 
-                    (i > 1) ? "s" : "", user, host);
+        sendto_user("%d tkline%sfor \"%s@%s\" found.", i, 
+                    (i > 1) ? "s " : " ", user, host);
 
         if (i > 0)
-        {
             rehash(2);
-        }
     }
-    else if (!add_tkline(host, user, reason, lifetime))
-    {
-        sendto_user("Error while trying to edit the "CPATH" file.");
-    }
+    else
+        if (!add_tkline(host, user, reason, lifetime))
+            sendto_user("Error while trying to edit the "CPATH" file.");
 }
 
-/* 
-** SQUERY QUIT 
+/* SQUERY QUIT 
 ** Each time we receive a QUIT via SQUERY we check whether
 ** the supplied password matches the one in the conf file or not.
 ** If not, an error is sent out. If yes, we close the connection to
@@ -1038,9 +849,7 @@ void squery_quit(char **args)
     char *ch;
 
     if (ch = (char *) strchr(args[4], '\r'))
-    {
         *ch = '\0';
-    }
 
     if (!strcmp(args[4], TKSERV_PASSWORD))
     {
@@ -1070,8 +879,8 @@ int main(int argc, char *argv[])
     struct in_addr     LocalHostAddr;
     struct sockaddr_in server;
     struct sockaddr_in localaddr;
-    struct hostent     *hp;
-    struct timeval     timeout;
+    struct hostent *hp;
+    struct timeval timeout;
 
     fd_set read_set;
     fd_set write_set;
@@ -1080,14 +889,12 @@ int main(int argc, char *argv[])
     {
         fprintf(stderr, "Usage: %s <server> <port>\n", argv[0]);
         fprintf(stderr, "       %s <Unix domain socket>\n", argv[0]);
-
         exit(1);
-    } 
-    else if (!is_unix && argc != 3)
+    }
+    else if (argc != 3)
     {
         fprintf(stderr, "Usage: %s <server> <port>\n", argv[0]);
         fprintf(stderr, "       %s <Unix domain socket>\n", argv[0]);
-
         exit(1);
     }
 
@@ -1097,7 +904,7 @@ int main(int argc, char *argv[])
         printf("you read the part about the service distribution in the README.\n");
     }
 
-    tks_log("TkServ has been started. Lean back and enjoy the show...");
+    tks_log("Welcome to TkServ. Lean back and enjoy the show...");
 
     if ((fd = socket(sock_type, proto_type, 0)) < 0)
     {
@@ -1109,9 +916,7 @@ int main(int argc, char *argv[])
     host = argv[1];
 
     if (!is_unix)
-    {
         port = argv[2];
-    }
 
     /* Unix domain socket */
     if (is_unix)
@@ -1127,39 +932,41 @@ int main(int argc, char *argv[])
             close(fd);
             exit(1);
         }
-    } else {
-        memset(&localaddr, 0, sizeof(struct sockaddr_in));
-        localaddr.sin_family = AF_INET;
-        localaddr.sin_addr   = LocalHostAddr;
-        localaddr.sin_port   = 0;
-        if (bind(fd, (struct sockaddr *) &localaddr, sizeof(localaddr)))
-        {
-            perror("bind");
-            close(fd);
-            exit(1);
-        }
-
-        memset(&server, 0, sizeof(struct sockaddr_in));
-        memset(&LocalHostAddr, 0, sizeof(LocalHostAddr));
-
-        if (!(hp = gethostbyname(host)))
-        {
-            perror("resolv");
-            close(fd);
-            exit(1);
-        }
-
-        memmove(&(server.sin_addr), hp->h_addr, hp->h_length);
-        memmove((void *) &LocalHostAddr, hp->h_addr, sizeof(LocalHostAddr));
-        server.sin_family = AF_INET;
-        server.sin_port   = htons(atoi(port));
-
-        if (connect(fd, (struct sockaddr *) &server, sizeof(server)) == -1)
-        {
-            perror("connect");
-            exit(1);
-        }
     }
+
+    memset(&localaddr, 0, sizeof(struct sockaddr_in));
+    localaddr.sin_family = AF_INET;
+    localaddr.sin_addr   = LocalHostAddr;
+    localaddr.sin_port   = 0;
+    
+    if (bind(fd, (struct sockaddr *) &localaddr, sizeof(localaddr)))
+    {
+        perror("bind");
+        close(fd);
+        exit(1);
+    }
+
+    memset(&server, 0, sizeof(struct sockaddr_in));
+    memset(&LocalHostAddr, 0, sizeof(LocalHostAddr));
+
+    if (!(hp = gethostbyname(host)))
+    {
+        perror("resolv");
+        close(fd);
+        exit(1);
+    }
+
+    memmove(&(server.sin_addr), hp->h_addr, hp->h_length);
+    memmove((void *) &LocalHostAddr, hp->h_addr, sizeof(LocalHostAddr));
+    server.sin_family = AF_INET;
+    server.sin_port   = htons(atoi(port));
+
+    if (connect(fd, (struct sockaddr *) &server, sizeof(server)) == -1)
+    {
+        perror("connect");
+        exit(1);
+    }
+
     /* register the service with SERVICE_WANT_NOTICE */
     sendto_server("PASS %s\n", TKSERV_PASSWORD);
     sendto_server("SERVICE %s localhost %s 33554432 0 :%s\n", TKSERV_NAME, TKSERV_DIST, TKSERV_DESC);
@@ -1168,24 +975,22 @@ int main(int argc, char *argv[])
     timeout.tv_usec = 1000;
     timeout.tv_sec  = 10;
 
-    /* daemonization... i'm sure it's not complete */
-    switch (fork())
-    {
-    case -1:
-        perror("fork()");
-        exit(3);
-    case 0:
-        close(STDIN_FILENO);
-        close(STDOUT_FILENO);
-        close(STDERR_FILENO);
-        if (setsid() == -1)
-        {
-            exit(4);
-        }
-        break;
-    default:
-        return 0;
-    }
+	/* daemonization... i'm sure it's not complete */	
+	switch (fork())
+	{
+		case -1:
+			perror("fork()");
+			exit(3);
+		case 0:
+			close(STDIN_FILENO);
+			close(STDOUT_FILENO);
+			close(STDERR_FILENO);
+			if (setsid() == -1)
+				exit(4);
+			break;
+		default:
+			return 0;
+	}
 
     /* listen for server output and parse it */
     while (!eof)
@@ -1201,9 +1006,8 @@ int main(int argc, char *argv[])
         
         if (!server_output(fd, buffer))
         {
-            tks_log("Connection closed.");
-            tks_log("Last server output was: %s", last_buf);
-
+            printf("Connection closed.\n");
+            printf("Last server output was: %s\n", last_buf);
             eof = 1;
         }
 
@@ -1211,9 +1015,8 @@ int main(int argc, char *argv[])
         parse_server_output(buffer);
     }
 
-    if (nuh)
-        free(nuh);
     close(fd);
+
     exit(0);
 }
 /* eof */

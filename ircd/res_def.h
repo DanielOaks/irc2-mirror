@@ -1,6 +1,4 @@
 /*
- * $Id: res_def.h,v 1.2.4.3 2001/05/14 05:28:28 chopin Exp $
- *
  * ircd/res_def.h (C)opyright 1992 Darren Reed.
  */
 
@@ -56,7 +54,6 @@ typedef struct	cachetable {
 	aCache	*name_list;
 	} CacheTable;
 
-/* must be a prime */
-#define ARES_CACSIZE	1009
-/* should be around twice smaller */
-#define	MAXCACHED	512
+#define ARES_CACSIZE	101
+
+#define	MAXCACHED	81

@@ -35,7 +35,7 @@
  */
 
 #ifndef lint
-static  char rcsid[] = "@(#)$Id: s_bsd.c,v 1.73.2.31 2004/05/09 20:24:07 chopin Exp $";
+static  char rcsid[] = "@(#)$Id: s_bsd.c,v 1.73 1999/07/23 17:15:14 kalt Exp $";
 #endif
 
 #include "os.h"
@@ -100,12 +100,6 @@ char	*hname;
 int	size;
 {
 #ifdef RES_INIT
-	/* some return plain hostname with ending dot, whoops. */
-	if (hname[strlen(hname)-1] == '.')
-	{
-		hname[strlen(hname)-1] = '\0';
-		size++;
-	}
 	/* try to fix up unqualified names */
 	if (!index(hname, '.'))
 	    {
@@ -114,12 +108,10 @@ int	size;
 			Debug((DEBUG_DNS,"ircd_res_init()"));
 			ircd_res_init();
 		    }
-		/* "2" is dot and ending \0 */
-		if (ircd_res.defdname[0] &&
-			strlen(ircd_res.defdname) + 2 <= size)
+		if (ircd_res.defdname[0])
 		    {
-			(void)strcat(hname, ".");
-			(void)strcat(hname, ircd_res.defdname);
+			(void)strncat(hname, ".", size-1);
+			(void)strncat(hname, ircd_res.defdname, size-2);
 		    }
 	    }
 #endif
@@ -140,7 +132,7 @@ int	size;
 **	text	is a *format* string for outputting error. It must
 **		contain only two '%s', the first will be replaced
 **		by the sockhost from the cptr, and the latter will
-**		by strerror(errno).
+**		be taken from sys_errlist[errno].
 **
 **	cptr	if not NULL, is the *LOCAL* client associated with
 **		the error.
@@ -165,7 +157,7 @@ aClient *cptr;
 	 * gamble anyway.
 	 */
 #ifdef	SO_ERROR
-	if (cptr && !IsMe(cptr) && cptr->fd >= 0)
+	if (!IsMe(cptr) && cptr->fd >= 0)
 		if (!GETSOCKOPT(cptr->fd, SOL_SOCKET, SO_ERROR, &err, &len))
 			if (err)
 				errtmp = err;
@@ -200,14 +192,9 @@ int	port;
 	/*
 	 * do it this way because building ip# from separate values for each
 	 * byte requires endian knowledge or some nasty messing. Also means
-	 * easy conversion of "*" to 0.0.0.0 or 134.* to 134.0.0.0 :-)
+	 * easy conversion of "*" 0.0.0.0 or 134.* to 134.0.0.0 :-)
 	 */
 	(void)sscanf(ipmask, "%d.%d.%d.%d", &ad[0], &ad[1], &ad[2], &ad[3]);
-	if (ad[0]>>8 || ad[1]>>8 || ad[2]>>8 || ad[3]>>8)
-	{
-		sendto_flag(SCH_ERROR, "Invalid ipmask %s", ipmask);
-		return -1;
-	}
 	(void)sprintf(ipname, "%d.%d.%d.%d", ad[0], ad[1], ad[2], ad[3]);
 
 	(void)sprintf(cptr->sockhost, "%-.42s.%u", ip ? ip : ME,
@@ -243,7 +230,7 @@ int	port;
 		if (!ip || (!isxdigit(*ip) && *ip != ':'))
 			server.sin6_addr = in6addr_any;
 		else
-			if(!inetpton(AF_INET6, ip, server.sin6_addr.s6_addr))
+			if(!inet_pton(AF_INET6, ip, server.sin6_addr.s6_addr))
 				bcopy(minus_one, server.sin6_addr.s6_addr,
 				      IN6ADDRSZ);
 #else
@@ -447,7 +434,7 @@ int rcvdsig;
 #if defined(USE_IAUTH)
 	static time_t last = 0;
 	static char first = 1;
-	int sp[2], fd, val;
+	int sp[2], fd;
 
 	if ((bootopt & BOOT_NOIAUTH) != 0)
 		return;
@@ -475,94 +462,45 @@ int rcvdsig;
 	adfd = sp[0];
 	set_non_blocking(sp[0], NULL);
 	set_non_blocking(sp[1], NULL); /* less to worry about in iauth */
-	val = IAUTH_BUFFER;
-	if (setsockopt(sp[0], SOL_SOCKET, SO_SNDBUF, (void *) &val,
-	    sizeof(val)) < 0)
-			sendto_flag(SCH_AUTH,
-			    "IAUTH_BUFFER too big for sp0 sndbuf, using default");
-	if (setsockopt(sp[1], SOL_SOCKET, SO_SNDBUF, (void *) &val,
-	    sizeof(val)) < 0)
-			sendto_flag(SCH_AUTH,
-			    "IAUTH_BUFFER too big for sp1 sndbuf, using default");
-	if (setsockopt(sp[0], SOL_SOCKET, SO_RCVBUF, (void *) &val,
-	    sizeof(val)) < 0)
-			sendto_flag(SCH_AUTH,
-			    "IAUTH_BUFFER too big for sp0 rcvbuf, using default");
-	if (setsockopt(sp[1], SOL_SOCKET, SO_RCVBUF, (void *) &val,
-	    sizeof(val)) < 0)
-			sendto_flag(SCH_AUTH,
-			    "IAUTH_BUFFER too big for sp1 rcvbuf, using default");
 	switch (vfork())
 	    {
-		case -1:
-			sendto_flag(SCH_ERROR, "vfork() failed!");
-			sendto_flag(SCH_AUTH, "Failed to restart iauth!");
-			close(sp[0]); close(sp[1]);
-			adfd = -1;
-			return;
-		case 0:
-			for (fd = 0; fd < MAXCONNECTIONS; fd++)
-				if (fd != sp[1])
-					(void)close(fd);
-			if (sp[1] != 0)
-			    {
-				(void)dup2(sp[1], 0);
-				close(sp[1]);
-			    }
-			if (execl(IAUTH_PATH, IAUTH, NULL) < 0)
-				_exit(-1); /* should really not happen.. */
-		default:
+	case -1:
+		sendto_flag(SCH_ERROR, "vfork() failed!");
+		sendto_flag(SCH_AUTH, "Failed to restart iauth!");
+		close(sp[0]); close(sp[1]);
+		adfd = -1;
+		return;
+	case 0:
+		for (fd = 0; fd < MAXCONNECTIONS; fd++)
+			if (fd != sp[1])
+				(void)close(fd);
+		if (sp[1] != 0)
+		    {
+			(void)dup2(sp[1], 0);
 			close(sp[1]);
+		    }
+		if (execl(IAUTH_PATH, IAUTH, NULL) < 0)
+			_exit(-1); /* should really not happen.. */
+	default:
+		close(sp[1]);
 	    }
 
 	if (first)
 		first = 0;
 	else
-	{
+	    {
 		int i;
 		aClient *cptr;
-		char	abuf[BUFSIZ];	/* size of abuf in vsendto_iauth */
-		/* 20 is biggest possible ending "%d O\n\0", which means
-		** 16-digit fd -- very unlikely :> */
-		char	*e = abuf + BUFSIZ - 20;
-		char	*s = abuf;
 
-		/* Build abuf to send big buffer once (or twice) to iauth,
-		** which goes faster than many consecutive small writes.
-		** BitKoenig claims it saves metadata overhead on Linux and
-		** does not harm other systems --B. */
 		for (i = 0; i <= highest_fd; i++)
-		{
+		    {   
 			if (!(cptr = local[i]))
 				continue;
 			if (IsServer(cptr) || IsService(cptr))
 				continue;
-			
-			/* if not enough room in abuf, send whatever we have
-			** now and start writing from begin of abuf again. */
-			if (s > e)
-			{
-				/* sendto_iauth() appends "\n", so we
-				** remove last one */
-				*(s - 1) = '\0';	
-				sendto_iauth(abuf);
-				s = abuf;
-			}
-			/* A little trick: we sprintf onto s and move s (which 
-			** points inside abuf) forward, at the end of s (number
-			** of bytes returned by sprintf). This makes s always 
-			** point to the end of things written on abuf, which 
-			** allows both next sprintf at the end (no strcat!) and
-			** removing last \n when needed. */
-			s += sprintf(s, "%d O\n", i);
-		}
-		/* send the rest */
-		if (s != abuf)
-		{
-			*(s - 1) = '\0';
-			sendto_iauth(abuf);
-		}
-	}
+			sendto_iauth("%d O", i);
+		    }
+	    }
 #endif
 }
 
@@ -663,8 +601,6 @@ void	init_sys()
 #if defined(HPUX) || defined(SVR4) || defined(DYNIXPTX) || \
     defined(_POSIX_SOURCE) || defined(SGI)
 		(void)setsid();
-#elif defined (__CYGWIN32__)
-    		(void)setpgrp();
 #else
 		(void)setpgrp(0, (int)getpid());
 #endif
@@ -824,7 +760,8 @@ Reg	aClient	*cptr;
 
 #ifdef INET6
 	if (IN6_IS_ADDR_LOOPBACK(&cptr->ip) || IsUnixSocket(cptr) ||
-	    !memcmp(cptr->ip.s6_addr, mysk.sin6_addr.s6_addr, 8) 
+		(cptr->ip.s6_laddr[0]==mysk.sin6_addr.s6_laddr[0] &&
+		 cptr->ip.s6_laddr[1]==mysk.sin6_addr.s6_laddr[1])
 /* ||
 	    IN6_ARE_ADDR_SAMEPREFIX(&cptr->ip, &mysk.SIN_ADDR))
  about the same, I think              NOT */
@@ -1062,16 +999,6 @@ check_serverback:
 	(void)attach_conf(cptr, n_conf);
 	(void)attach_conf(cptr, c_conf);
 	(void)attach_confs(cptr, name, CONF_HUB|CONF_LEAF);
-	if (IsIllegal(n_conf) || IsIllegal(c_conf))
-	{
-		sendto_flag(SCH_DEBUG, "Illegal class!");
-		return -2;
-	}
-	if (!n_conf->host || !c_conf->host)
-	{
-		sendto_flag(SCH_DEBUG, "Null host in class!");
-		return -2;
-	}
 
 #ifdef INET6
 	if ((AND16(c_conf->ipnum.s6_addr) == 255) && !IsUnixSocket(cptr))
@@ -1241,7 +1168,7 @@ void	close_connection(cptr)
 aClient *cptr;
 {
 	Reg	aConfItem *aconf;
-	Reg	int	i;
+	Reg	int	i,j;
 #ifdef SO_LINGER
 	struct 	linger	sockling;
 
@@ -1294,15 +1221,14 @@ aClient *cptr;
 	 */
 	del_queries((char *)cptr);
 	/*
-	 * If the server connection has been up for a long amount of time,
-	 * schedule a 'quick' reconnect, else reset the next-connect cycle.
+	 * If the connection has been up for a long amount of time, schedule
+	 * a 'quick' reconnect, else reset the next-connect cycle.
 	 */
-	if (IsServer(cptr) &&
-		(aconf = find_conf_exact(cptr->name, cptr->username,
-		cptr->sockhost, CFLAG)))
+	if ((aconf = find_conf_exact(cptr->name, cptr->username,
+				    cptr->sockhost, CFLAG)))
 	    {
 		/*
-		 * Reschedule a faster reconnect, if this was a automatically
+		 * Reschedule a faster reconnect, if this was a automaticly
 		 * connected configuration entry. (Note that if we have had
 		 * a rehash in between, the status has been changed to
 		 * CONF_ILLEGAL). But only do this if it was a "good" link.
@@ -1310,14 +1236,9 @@ aClient *cptr;
 		aconf->hold = timeofday;
 		aconf->hold += (aconf->hold - cptr->since > HANGONGOODLINK) ?
 				HANGONRETRYDELAY : ConfConFreq(aconf);
-		/* nextconnect could be 0 */
-		if (nextconnect > aconf->hold || nextconnect == 0)
+		if (nextconnect > aconf->hold)
 			nextconnect = aconf->hold;
 	    }
-	if (nextconnect == 0 && (IsHandshake(cptr) || IsConnecting(cptr)))
-	{
-		nextconnect = timeofday + HANGONRETRYDELAY;
-	}
 
 	if (cptr->authfd >= 0)
 	    {
@@ -1362,6 +1283,40 @@ aClient *cptr;
 		local[i] = NULL;
 		(void)close(i);
 
+		/*
+		 * fd remap to keep local[i] filled at the bottom.
+		 *	don't *ever* move descriptors for 
+		 *		+ log file
+		 *		+ sockets bound to listen() ports
+		 *	--Yegg
+		 */
+		if (i >= 0 && (j = highest_fd) > i)
+		    {
+			while (!local[j])
+				j--;
+			if (j > i && local[j] &&
+			    !(IsLog(local[j]) || IsMe(local[j])))
+			    {
+				if (dup2(j,i) == -1)
+					return;
+				local[i] = local[j];
+				local[i]->fd = i;
+				local[j] = NULL;
+				(void)close(j);
+				del_fd(j, &fdall);
+				add_fd(i, &fdall);
+				if (IsServer(local[i]) || IsMe(local[i]))
+				    {
+					del_fd(j, &fdas);
+					add_fd(i, &fdas);
+				    }
+				while (!local[highest_fd])
+					highest_fd--;
+#if defined(USE_IAUTH)
+				sendto_iauth("%d R %d", j, i);
+#endif
+			    }
+		    }
 		cptr->fd = -2;
 		DBufClear(&cptr->sendQ);
 		DBufClear(&cptr->recvQ);
@@ -1406,7 +1361,7 @@ aClient	*cptr;
 		report_error("setsockopt(SO_DEBUG) %s:%s", cptr);
 #endif /* SOLARIS_2 */
 #endif
-#if defined(SO_USELOOPBACK) && !defined(__CYGWIN32__)
+#ifdef	SO_USELOOPBACK
 	opt = 1;
 	if (SETSOCKOPT(fd, SOL_SOCKET, SO_USELOOPBACK, &opt, opt) < 0)
 		report_error("setsockopt(SO_USELOOPBACK) %s:%s", cptr);
@@ -1645,7 +1600,6 @@ add_con_refuse:
 
 		lin.flags = ASYNC_CLIENT;
 		lin.value.cptr = acptr;
-		lin.next = NULL;
 #ifdef INET6
 		Debug((DEBUG_DNS, "lookup %s",
 		       inet_ntop(AF_INET6, (char *)&addr.sin6_addr,
@@ -1666,13 +1620,19 @@ add_con_refuse:
 		sendto_flag(SCH_LOCAL, "Rejecting connection from %s[%s].",
 			    (acptr->hostp) ? acptr->hostp->h_name : "",
 			    acptr->sockhost);
-		sendto_flog(acptr, " ?Clone? ", "<none>",
+		sendto_flog(acptr, " ?Clone? ", 0, "<none>",
 			    (acptr->hostp) ? acptr->hostp->h_name :
 			    acptr->sockhost);
 		del_queries((char *)acptr);
-		(void)send(fd,
+# ifdef INET6
+		(void)sendto(acptr->fd,
+			     "ERROR :Too rapid connections from your host\r\n",
+			     46, 0, 0, 0);
+# else
+		(void)send(acptr->fd,
 			   "ERROR :Too rapid connections from your host\r\n",
 			   46, 0);
+# endif
 		goto add_con_refuse;
 	    }
 #endif
@@ -1746,14 +1706,6 @@ int	fd;
 	add_client_to_list(acptr);
 	set_non_blocking(acptr->fd, acptr);
 	(void)set_sock_opts(acptr->fd, acptr);
-# if defined(USE_IAUTH)
-	/*
-	** iauth protocol and iauth itself should be extended to alllow
-	** dealing with this type of connection.
-	*/
-	sendto_iauth("%d O", acptr->fd);
-	SetDoneXAuth(acptr);
-# endif
 	return;
 }
 #endif
@@ -1788,7 +1740,7 @@ aClient *cptr;
 		if ((fdnew = accept(cptr->fd, NULL, NULL)) < 0)
 		    {
 			if (errno != EWOULDBLOCK)
-				report_error("Cannot accept connection %s:%s",
+				report_error("Cannot accept connections %s:%s",
 					     cptr);
 			break;
 		    }
@@ -1799,8 +1751,14 @@ aClient *cptr;
 			sendto_flag(SCH_ERROR, "All connections in use. (%s)",
 				    get_client_name(cptr, TRUE));
 			find_bounce(NULL, 0, fdnew);
+#ifdef INET6
+			(void)sendto(fdnew,
+				     "ERROR :All connections in use\r\n",
+				     32, 0, 0, 0);
+#else
 			(void)send(fdnew, "ERROR :All connections in use\r\n",
 				   32, 0);
+#endif
 			(void)close(fdnew);
 			continue;
 		    }
@@ -2316,17 +2274,9 @@ int	ro;
 deadsocket:
 				if (TST_READ_EVENT(fd))
 					CLR_READ_EVENT(fd);
-				if (cptr->exitc == EXITC_SENDQ)
-				{
-					(void)exit_client(cptr,cptr,&me,
-						"Max SendQ exceeded");
-				}
-				else
-				{
-					cptr->exitc = EXITC_ERROR;
-					(void)exit_client(cptr, cptr, &me,
-						strerror(get_sockerr(cptr)));
-				}
+				cptr->exitc = EXITC_ERROR;
+				(void)exit_client(cptr, cptr, &me,
+						  strerror(get_sockerr(cptr)));
 				continue;
 			    }
 		    }
@@ -2452,7 +2402,7 @@ struct	hostent	*hp;
 		s = (char *)index(aconf->host, '@');
 		s++; /* should NEVER be NULL */
 #ifdef INET6
-		if (!inetpton(AF_INET6, s, aconf->ipnum.s6_addr))
+		if (!inet_pton(AF_INET6, s, aconf->ipnum.s6_addr))
 #else
 		if ((aconf->ipnum.s_addr = inetaddr(s)) == -1)
 #endif
@@ -2623,7 +2573,7 @@ int	*lenp;
 	 */
 #ifdef INET6
 	if (isdigit(*aconf->host) && (AND16(aconf->ipnum.s6_addr) == 255))
-		if (!inetpton(AF_INET6, aconf->host,aconf->ipnum.s6_addr))
+		if (!inet_pton(AF_INET6, aconf->host,aconf->ipnum.s6_addr))
 			bcopy(minus_one, aconf->ipnum.s6_addr, IN6ADDRSZ);
 	if (AND16(aconf->ipnum.s6_addr) == 255)
 #else
@@ -2749,7 +2699,7 @@ char	*namebuf, *linebuf, *chname;
 {
 	static	char	wrerr[] = "NOTICE %s :Write error. Couldn't summon.";
 	int	fd;
-	char	line[512];
+	char	line[120];
 	struct	tm	*tp;
 
 	tp = localtime(&timeofday);
@@ -2768,7 +2718,6 @@ char	*namebuf, *linebuf, *chname;
 	 */
 	if ((linebuf[0] != 't' || linebuf[1] != 't' || linebuf[2] != 'y')
 	    && (linebuf[0] != 'c' || linebuf[1] != 'o' || linebuf[2] != 'n')
-	    && (linebuf[0] != 'p' || linebuf[1] != 't' || linebuf[2] != 's')
 #ifdef HPUX
 	    && (linebuf[0] != 'p' || linebuf[1] != 't' || linebuf[2] != 'y' ||
 		linebuf[3] != '/')
@@ -2868,10 +2817,6 @@ int	len;
 	struct	hostent	*hp;
 	char	*cname = cptr->name;
 	aConfItem	*aconf;
-#ifdef HAVE_GETIPNODEBYNAME
-	int	error_num1, error_num2;
-	struct	hostent	*hp1, *hp2;
-#endif
 
 	/*
 	** Setup local socket structure to use for binding to.
@@ -2881,7 +2826,7 @@ int	len;
 	
 	if ((aconf = find_me())->passwd && isdigit(*aconf->passwd))
 #ifdef INET6
-		if(!inetpton(AF_INET6, aconf->passwd, mysk.sin6_addr.s6_addr))
+		if(!inet_pton(AF_INET6, aconf->passwd, mysk.sin6_addr.s6_addr))
 			bcopy(minus_one, mysk.sin6_addr.s6_addr, IN6ADDRSZ);
 #else
 		mysk.sin_addr.s_addr = inetaddr(aconf->passwd);
@@ -2891,7 +2836,9 @@ int	len;
 		return;
 	name[len] = '\0';
 
-	add_local_domain(name, len - strlen(name));
+	/* assume that a name containing '.' is a FQDN */
+	if (!index(name,'.'))
+		add_local_domain(name, len - strlen(name));
 
 	/*
 	** If hostname gives another name than cname, then check if there is
@@ -2900,14 +2847,7 @@ int	len;
 	*/
 	if (BadPtr(cname))
 		return;
-#ifdef HAVE_GETIPNODEBYNAME
-	hp1 = getipnodebyname(cname, AF_INET6, AI_DEFAULT, &error_num1);
-	hp2 = getipnodebyname(name, AF_INET6, AI_DEFAULT, &error_num2);
-	if (! error_num1) hp=hp1; else hp=hp2;
-	if ((! error_num1) || (! error_num2)) 
-#else
 	if ((hp = gethostbyname(cname)) || (hp = gethostbyname(name)))
-#endif
 	    {
 		char	*hname;
 		int	i = 0;
@@ -2936,10 +2876,6 @@ int	len;
 		Debug((DEBUG_DEBUG,"local name is %s",
 				get_client_name(&me,TRUE)));
 	    }
-#ifdef HAVE_GETIPNODEBYNAME
-	freehostent(hp1);
-	freehostent(hp2);
-#endif
 	return;
 }
 
@@ -2957,10 +2893,8 @@ aConfItem	*aconf;
 	bzero((char *)&from, sizeof(from));
 	if (aconf->passwd && isdigit(*aconf->passwd))
 #ifdef INET6
-	    {
-		if (!inetpton(AF_INET6, aconf->passwd,from.sin6_addr.s6_addr))
-			bcopy(minus_one, from.sin6_addr.s6_addr, IN6ADDRSZ);
-	    }
+	  if(!inet_pton(AF_INET6, aconf->passwd,from.sin6_addr.s6_addr))
+		bcopy(minus_one, from.sin6_addr.s6_addr, IN6ADDRSZ);
 #else
 	  from.sin_addr.s_addr = inetaddr(aconf->passwd);
 #endif
@@ -3139,7 +3073,6 @@ static	void	polludp()
 	    }
 	Debug((DEBUG_DEBUG,"udp poll"));
 
-	memset(&from, 0, fromlen);
 	n = recvfrom(udpfd, readbuf, mlen, 0, (SAP)&from, &fromlen);
 	if (n == -1)
 	    {
@@ -3148,25 +3081,7 @@ static	void	polludp()
 			return;
 		else
 		    {
-#if 0 /* seems to create more confusion than it's worth */
-			char buf[100];
-
-			sprintf(buf, "udp port recvfrom() from %s to %%s: %%s",
-#ifdef INET6
-				from.sin6_addr.s6_addr
-#else
-				from.sin_addr.s_addr
-#endif
-				== 0 ? "unknown" :
-#ifdef INET6
-				inetntop(AF_INET6, (char *)&from.sin6_addr,
-					mydummy, MYDUMMY_SIZE)
-#else
-				inetntoa((char *)&from.sin_addr)
-#endif
-				);
-			report_error(buf, &me);
-#endif
+			report_error("udp port recvfrom (%s): %s", &me);
 			return;
 		    }
 	    }

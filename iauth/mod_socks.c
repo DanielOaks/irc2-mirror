@@ -18,7 +18,7 @@
  */
 
 #ifndef lint
-static  char rcsid[] = "@(#)$Id: mod_socks.c,v 1.25.2.9 2003/10/13 00:11:43 chopin Exp $";
+static  char rcsid[] = "@(#)$Id: mod_socks.c,v 1.25 1999/08/13 21:06:30 chopin Exp $";
 #endif
 
 #include "os.h"
@@ -30,12 +30,8 @@ static  char rcsid[] = "@(#)$Id: mod_socks.c,v 1.25.2.9 2003/10/13 00:11:43 chop
 /****************************** PRIVATE *************************************/
 
 #define CACHETIME 30
+
 #define SOCKSPORT 1080
-/*
-   A lot of socks v4 proxies return 4,91 instead of 0,91 otherwise
-   working perfectly -- this will deal with them.
-*/
-#define BROKEN_PROXIES 1
 
 struct proxylog
 {
@@ -51,8 +47,7 @@ struct proxylog
 #define OPT_CAREFUL 	0x008
 #define OPT_V4ONLY  	0x010
 #define OPT_V5ONLY  	0x020
-#define OPT_PROTOCOL	0x040
-#define OPT_BOFH        0x080
+#define OPT_PROTOCOL	0x100
 
 #define PROXY_NONE		0
 #define PROXY_OPEN		1
@@ -206,67 +201,25 @@ socks_write(cl, strver)
 u_int cl;
 char *strver;
 {
-    struct socks_private *mydata = cldata[cl].instance->data;
-    u_char query[22];    /* big enough to hold all queries */
+    u_char query[13];    /* big enough to hold all queries */
     int query_len = 13;  /* lenght of socks4 query */
-#ifndef	INET6
     u_int a, b, c, d;
-#else
-	struct in6_addr	addr;
-#endif
     
-#ifndef	INET6
     if (sscanf(cldata[cl].ourip, "%u.%u.%u.%u", &a,&b,&c,&d) != 4)
 	{
 	    sendto_log(ALOG_DSOCKS|ALOG_IRCD, LOG_ERR,
 		       "socks_write%s(%d): sscanf(\"%s\") failed", 
-#else
-    if (inetpton(AF_INET6, cldata[cl].ourip, (void *) addr.s6_addr) != 1)
-	{
-			sendto_log(ALOG_DSOCKS|ALOG_IRCD, LOG_ERR,
-			"socks_write%s(%d): inetpton(\"%s\") failed",
-#endif
-			strver, cl, cldata[cl].ourip);
+		       strver, cl, cldata[cl].ourip);
 	    close(cldata[cl].wfd);
 	    cldata[cl].wfd = 0;
 	    return -1;
 	}
-#ifdef INET6
-	/*
-	 * socks4 does not support ipv6, so we switch to socks5, if
-	 * address is not ipv4 mapped in ipv6
-	 */
-	if (cldata[cl].mod_status == ST_V4 && !IN6_IS_ADDR_V4MAPPED(&addr))
-	{
-		if (mydata->options & OPT_V4ONLY)
-		{
-			/* we cannot do work! */
-			sendto_log(ALOG_DSOCKS|ALOG_IRCD, LOG_WARNING,
-				"socks4 does not work on ipv6");
-			close(cldata[cl].wfd);
-			cldata[cl].wfd = 0;
-			return -1;
-		}
-		else
-		{
-			cldata[cl].mod_status = ST_V5;
-		}
-	}
-#endif
     if (cldata[cl].mod_status == ST_V4)
 	{
 	    query[0] = 4; query[1] = 1;
 	    query[2] = ((cldata[cl].ourport & 0xff00) >> 8);
 	    query[3] = (cldata[cl].ourport & 0x00ff);
-#ifndef	INET6
 	    query[4] = a; query[5] = b; query[6] = c; query[7] = d;
-#else	
-	    /* socks v4 only supports IPv4, so it should be a ipv4 mapped
-	     * ipv6.
-	     * Just copy the ipv4 portion.
-	     */
-	    memcpy(query + 4, ((char *)addr.s6_addr) + 12, 4);
-#endif
 	    query[8] = 'u'; query[9] = 's'; query[10] = 'e'; query[11] = 'r';
 	    query[12] = 0;
 	}
@@ -276,31 +229,11 @@ char *strver;
 	    query_len = 3;
 	    if (cldata[cl].mod_status == ST_V5b)
 		{
-#ifndef	INET6
 		    query_len = 10;
 		    query[3] = 1;
 		    query[4] = a; query[5] = b; query[6] = c; query[7] = d;
 		    query[8] = ((cldata[cl].ourport & 0xff00) >>8);
 		    query[9] = (cldata[cl].ourport & 0x00ff);
-#else
-		    if (IN6_IS_ADDR_V4MAPPED(&addr))
-			{
-			    query_len = 10;
-			    query[3] = 1;	/* ipv4 address */
-			    memcpy(query + 4, ((char *)addr.s6_addr) +
-				12, 4);
-			    query[8] = ((cldata[cl].ourport & 0xff00) >>8);
-			    query[9] = (cldata[cl].ourport & 0x00ff);
-			}
-		    else
-			{
-			    query_len = 22;
-			    query[3] = 4;
-			    memcpy(query + 4, addr.s6_addr, 16);
-			    query[20] = ((cldata[cl].ourport & 0xff00) >>8);
-			    query[21] = (cldata[cl].ourport & 0x00ff);
-			}
-#endif
 		}
 	}
     
@@ -327,9 +260,10 @@ u_int cl;
 char *strver;
 {
     struct socks_private *mydata = cldata[cl].instance->data;
+    int again = 0;
     u_char state = PROXY_CLOSE;
     
-    /* not enough data from the other end */
+    /* data's in from the other end */
     if (cldata[cl].buflen < 2)
 	    return 0;
     
@@ -339,11 +273,7 @@ char *strver;
     
     if (cldata[cl].mod_status == ST_V4)
 	{
-	    if (cldata[cl].inbuffer[0] == 0
-#ifdef BROKEN_PROXIES
-		|| cldata[cl].inbuffer[0] == 4
-#endif
-		)
+	    if (cldata[cl].inbuffer[0] == 0)
 		{
 		    if (cldata[cl].inbuffer[1] < 90 ||
 			cldata[cl].inbuffer[1] > 93)
@@ -363,7 +293,6 @@ char *strver;
     else /* ST_V5 or ST_V5b */
 	{
 	    if (cldata[cl].inbuffer[0] == 5)
-		{
 		    if (cldata[cl].inbuffer[1] == 0)
 			    state = PROXY_OPEN;
 		    else
@@ -382,40 +311,34 @@ char *strver;
 					     cldata[cl].inbuffer[1] != 2)
 					    state = PROXY_OPEN;
 			}
-		}
 	    else
 		    state = PROXY_BADPROTO;
 	}
     
-	if (cldata[cl].mod_status == ST_V4)
+    if (cldata[cl].mod_status == ST_V4 && state != PROXY_OPEN &&
+	!(mydata->options & OPT_V4ONLY))
 	{
-		if (state != PROXY_OPEN && !(mydata->options & OPT_V4ONLY))
-		{
-			cldata[cl].mod_status = ST_V5;
-			cldata[cl].buflen=0;
-			close(cldata[cl].rfd);
-			cldata[cl].rfd = 0;
-			goto again;
-		}
-	}
-	else if (cldata[cl].mod_status == ST_V5)
-	{
-		if (state == PROXY_OPEN && (mydata->options & OPT_CAREFUL))
-		{
-			cldata[cl].mod_status = ST_V5b;
-			cldata[cl].buflen=0;
-			cldata[cl].wfd = cldata[cl].rfd;
-			cldata[cl].rfd = 0;
-			goto again;
-		}
-	}
-	else	/* ST_V5b */
-	{
-		/* we just checked second phase of socks 5.
-		   nothing left to do. */
+	    cldata[cl].mod_status = ST_V5;
+	    cldata[cl].buflen=0;
+	    close(cldata[cl].rfd);
+	    cldata[cl].rfd = 0;
+	    again = 1;
 	}
     
-	if (state == PROXY_UNEXPECTED)
+    if (cldata[cl].mod_status == ST_V5 && state == PROXY_OPEN &&
+	(mydata->options & OPT_CAREFUL))
+	{
+	    cldata[cl].mod_status = ST_V5b;
+	    cldata[cl].buflen=0;
+	    close(cldata[cl].rfd);
+	    cldata[cl].rfd = 0;
+	    again = 1;
+	}
+    
+    if (state == PROXY_OPEN && again == 0)
+	    socks_open_proxy(cl, strver);
+    
+    if (state == PROXY_UNEXPECTED)
 	{
 	    sendto_log(ALOG_FLOG, LOG_WARNING,
 		       "socks%s: unexpected reply: %u,%u %s[%s]", strver,
@@ -424,49 +347,31 @@ char *strver;
 	    sendto_log(ALOG_IRCD, 0, "socks%s: unexpected reply: %u,%u",
 		       strver, cldata[cl].inbuffer[0],
 		       cldata[cl].inbuffer[1]);
-		/* Oh well. Unexpected response can mean anything.
-		   If we're megaparanoid, we assume it's open proxy */
-	    state = mydata->options & OPT_BOFH ? PROXY_OPEN : PROXY_CLOSE;
+	    state = PROXY_CLOSE;
 	}
-    	else if (state == PROXY_BADPROTO) 
+    
+    if (state == PROXY_BADPROTO && (mydata->options & OPT_PROTOCOL))
 	{
-    		if (mydata->options & OPT_PROTOCOL)
-		{
-		    sendto_log(ALOG_FLOG, LOG_WARNING,
+	    sendto_log(ALOG_FLOG, LOG_WARNING,
 		       "socks%s: protocol error: %u,%u %s[%s]", strver,
 		       cldata[cl].inbuffer[0], cldata[cl].inbuffer[1],
 		       cldata[cl].host, cldata[cl].itsip);
-		    sendto_log(ALOG_IRCD, 0, "socks%s: protocol error: %u,%u",
+	    sendto_log(ALOG_IRCD, 0, "socks%s: protocol error: %u,%u",
 		       strver, cldata[cl].inbuffer[0],
 		       cldata[cl].inbuffer[1]);
-		}
-		/* oh well. protocol error can mean anything.
-		   so if we're megaparanoid, we assume it's open proxy */
-		state = mydata->options & OPT_BOFH ? PROXY_OPEN : PROXY_CLOSE;
+	    state = PROXY_CLOSE;
 	}
-
-        /* We're past checking of socks 4, socks 5 and even socks 5b,
-           if it was needed. Now deal with final state */
-
-	/* Here state can be only OPEN, CLOSE or NONE */
-
-	if (state == PROXY_OPEN)
-	    socks_open_proxy(cl, strver);
     
-    
+    if (again == 1)
+	    return socks_start(cl);
+    else
+	{
 	    socks_add_cache(cl, state);
 	    close(cldata[cl].rfd);
 	    cldata[cl].rfd = 0;
 	    return -1;
-
-again:
-	if (cldata[cl].mod_status == ST_V5b)
-		return 0;
-	else
-		return socks_start(cl);
-
-	/* not reached */
-	return 0;
+	}
+    return 0;
 }
 
 /******************************** PUBLIC ************************************/
@@ -486,6 +391,9 @@ AnInstance *self;
     char tmpbuf[80], cbuf[32];
     static char txtbuf[80];
     
+#if defined(INET6)
+    return "IPv6 unsupported.";
+#endif
     if (self->opt == NULL)
 	    return "Aie! no option(s): nothing to be done!";
     
@@ -507,13 +415,7 @@ AnInstance *self;
 	    strcat(tmpbuf, ",reject");
 	    strcat(txtbuf, ", Reject");
 	}
-    if (strstr(self->opt, "megaparanoid"))
-	{
-		mydata->options |= OPT_PARANOID|OPT_BOFH;
-		strcat(tmpbuf, ",megaparanoid");
-		strcat(txtbuf, ", Megaparanoid");
-	}
-    else if (strstr(self->opt, "paranoid"))
+    if (strstr(self->opt, "paranoid"))
 	{
 	    mydata->options |= OPT_PARANOID;
 	    strcat(tmpbuf, ",paranoid");

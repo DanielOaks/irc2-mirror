@@ -22,7 +22,7 @@
  */
 
 #ifndef lint
-static  char rcsid[] = "@(#)$Id: s_serv.c,v 1.65.2.13 2004/03/01 18:00:33 chopin Exp $";
+static  char rcsid[] = "@(#)$Id: s_serv.c,v 1.65 1999/07/02 16:49:37 kalt Exp $";
 #endif
 
 #include "os.h"
@@ -34,7 +34,6 @@ static  char rcsid[] = "@(#)$Id: s_serv.c,v 1.65.2.13 2004/03/01 18:00:33 chopin
 static	char	buf[BUFSIZE];
 
 static	int	check_link __P((aClient *));
-static	void	report_listeners __P((aClient *, char *));
 
 /*
 ** m_functions execute protocol messages on this server:
@@ -123,8 +122,7 @@ char	*parv[];
 	Reg	aConfItem *aconf;
 	char	*server;
 	Reg	aClient	*acptr;
-	char	*comment = (parc > 2 && parv[2]) ? parv[2] : "no reason";
-	static char	comment2[TOPICLEN+1];
+	char	*comment = (parc > 2 && parv[2]) ? parv[2] : cptr->name;
 
 	if (parc > 1)
 	    {
@@ -211,21 +209,6 @@ char	*parv[];
 		sendto_one(sptr, err_str(ERR_NOPRIVILEGES, parv[0]));
 		return 1;
 	    }
-	if (MyPerson(sptr))
-	{
-		int	k=TOPICLEN-strlen(sptr->name)-7;
-
-		/* Shorten original comment, should it be too long. */
-		if (strlen(comment) > k)
-		{
-			comment[k] = '\0';
-		}
-		/* As we change comment, we have to copy, who knows what
-		** parv[2] can overwrite. */
-		comment2[0] = '\0';
-		sprintf(comment2, "%s (by %s)", comment, sptr->name);
-		comment = comment2;
-	}
 	if (!MyConnect(acptr) && (cptr != acptr->from))
 	    {
 		/*
@@ -723,22 +706,27 @@ Reg	aClient	*cptr;
 	    }
 
 #ifdef CRYPT_LINK_PASSWORD
-	/* pass whole aconf->passwd as salt, let crypt() deal with it */
+	/* use first two chars of the password they send in as salt */
 
+	/* passwd may be NULL. Head it off at the pass... */
 	if (*cptr->passwd)
 	    {
+		char    salt[3];
 		extern  char *crypt();
 
-		encr = crypt(cptr->passwd, aconf->passwd);
-		if (encr == NULL)
+		/* Determine if MD5 or DES */
+                if (strncmp(aconf->passwd, "$1$", 3))
 		    {
-			ircstp->is_ref++;
-			sendto_one(cptr, "ERROR :No Access (crypt failed) %s",
-			  	inpath);
-			sendto_flag(SCH_ERROR,
-			    	"Access denied (crypt failed) %s", inpath);
-			return exit_client(cptr, cptr, &me, "Bad Password");
+			salt[0] = aconf->passwd[0];
+			salt[1] = aconf->passwd[1];
 		    }
+		else
+		    {
+			salt[0] = aconf->passwd[3];
+			salt[1] = aconf->passwd[4];
+		    }
+		salt[2] = '\0';
+		encr = crypt(cptr->passwd, salt);
 	    }
 	else
 		encr = "";
@@ -1365,7 +1353,7 @@ char	*to;
 				   buf, cp->lseq, cp->lrecvd,
 				   cp->ping / (cp->recvd ? cp->recvd : 1),
 				   tmp->pref);
-			/* sendto_flag(SCH_DEBUG, "%s: %d", buf, cp->seq); */
+			sendto_flag(SCH_DEBUG, "%s: %d", buf, cp->seq);
 		    }
 	return;
 }
@@ -1380,43 +1368,20 @@ char	*parv[];
 	aClient	*acptr;
 	char	stat = parc > 1 ? parv[1][0] : '\0';
 	Reg	int	i;
-	int	wilds, doall;
-	char	*name, *cm;
+	int	doall = 0, wilds = 0;
+	char	*name = NULL, *cm = NULL;
 
-	if (IsServer(cptr))
+	if (IsServer(cptr) &&
+	    (stat != 'd' && stat != 'p' && stat != 'q' && stat != 's' &&
+	     stat != 'u' && stat != 'v') &&
+	    !(stat == 'o' && IsOper(sptr)))
 	    {
-		switch(stat)
-                {
-		/* These stats are available with no penalty for all. */
-		case 'd': case 'D':     /* defines */
-		case 'p':               /* ping stats */
-		case 'P':               /* ports listening */
-		case 'q': case 'Q':     /* Q:lines */
-		case 's': case 'S':     /* services */
-		case 'u': case 'U':     /* uptime */
-		case 'v': case 'V':     /* V:lines */
-		case 'l': case 'L':     /* links (wildcard is dropped later) */
-			break;
-		/* These are available with no penalty for opers. */
-		/* Although I have no idea, why only for opers. --B. */
-		case 'o': case 'O':     /* O:lines */
-		case 'c': case 'C':     /* C:/N: lines */
-		case 'h': case 'H':     /* H:/D: lines */
-		case 'a': case 'A':     /* iauth conf */
-		case 'b': case 'B':     /* B:lines */
-			if (IsOper(sptr))
-			{
-				break;
-			}
-			/* else fallthrough */
-                default:
 		if (check_link(cptr))
 		    {
 			sendto_one(sptr, rpl_str(RPL_TRYAGAIN, parv[0]),
 				   "STATS");
 			return 5;
 		    }
-		}
 	    }
 	if (parc == 3)
 	    {
@@ -1424,17 +1389,31 @@ char	*parv[];
 				2, parc, parv) != HUNTED_ISME)
 			return 5;
 	    }
-	else if (parc >= 3)
+	else if (parc == 4)
 	    {
 		if (hunt_server(cptr, sptr, ":%s STATS %s %s %s",
 				2, parc, parv) != HUNTED_ISME)
 			return 5;
 	    }
 
-	name = (parc > 2) ? parv[2] : ME;
-	cm = (parc > 3) ? parv[3]: name;
-	doall = !match(name, ME) && !match(cm, ME);
-	wilds = index(cm, '*') || index(cm, '?');
+	if (parc > 2)
+	    {
+		name = parv[2];
+		if (!mycmp(name, ME))
+			doall = 2;
+		else if (match(name, ME) == 0)
+			doall = 1;
+		if (index(name, '*') || index(name, '?'))
+			wilds = 1;
+		if (parc > 3)
+		    {
+			cm = parv[3];
+			if (!index(cm, '*') && !index(cm, '?'))
+				wilds = 0, doall = 0;
+		    }
+	    }
+	else
+		name = ME;
 
 	switch (stat)
 	{
@@ -1445,45 +1424,34 @@ char	*parv[];
 		 * are invisible not being visible to 'foreigners' who use
 		 * a wild card based search to list it.
 		 */
-		if (doall || wilds)
+		for (i = 0; i <= highest_fd; i++)
 		    {
-			if (IsServer(cptr) && check_link(cptr))
-                        {
-				sendto_one(sptr, rpl_str(RPL_TRYAGAIN, parv[0]),
-				   "STATS");
-                                return 5;
-                        }
-			for (i = 0; i <= highest_fd; i++)
-			    {
-				if (!(acptr = local[i]))
-					continue;
-				if (IsPerson(acptr) && !(MyConnect(sptr) 
-				    && IsAnOper(sptr)) && acptr != sptr)
-					continue;
-				if (wilds && match(cm, acptr->name))
-					continue;
-				sendto_one(cptr, Lformat, ME,
-					RPL_STATSLINKINFO, parv[0],
-					get_client_name(acptr, isupper(stat)),
-					(int)DBufLength(&acptr->sendQ),
-					(int)acptr->sendM, (int)acptr->sendK,
-					(int)acptr->receiveM, 
-					(int)acptr->receiveK,
-					timeofday - acptr->firsttime);
-			    }
-		    }
-		else
-		    {
-			if ((acptr = find_client(cm, NULL)) && MyConnect(acptr))
-				sendto_one(cptr, Lformat, ME,
-					RPL_STATSLINKINFO, parv[0],
-					get_client_name(acptr, isupper(stat)),
-					(int)DBufLength(&acptr->sendQ),
-					(int)acptr->sendM, (int)acptr->sendK,
-					(int)acptr->receiveM,
-					(int)acptr->receiveK,
-					timeofday - acptr->firsttime);
-			
+			if (!(acptr = local[i]))
+				continue;
+#if 0
+			if (IsPerson(acptr) && IsInvisible(acptr) &&
+			    (doall || wilds) && !(MyConnect(sptr) &&
+			     IsLocal(sptr) && IsOper(sptr)) &&
+			    !IsAnOper(acptr) && acptr != sptr)
+#endif
+			if (IsPerson(acptr) &&
+			    (doall || wilds) &&
+			    !(MyConnect(sptr) && IsAnOper(sptr)) &&
+			    acptr != sptr)
+				continue;
+			if (!doall && wilds && match(name, acptr->name))
+				continue;
+			if (!(doall || wilds) &&
+			    ((!cm && mycmp(name, acptr->name)) ||
+			     (cm && match(cm, acptr->name))))
+				continue;
+			sendto_one(cptr, Lformat, ME,
+				   RPL_STATSLINKINFO, parv[0],
+				   get_client_name(acptr, isupper(stat)),
+				   (int)DBufLength(&acptr->sendQ),
+				   (int)acptr->sendM, (int)acptr->sendK,
+				   (int)acptr->receiveM, (int)acptr->receiveK,
+				   timeofday - acptr->firsttime);
 		    }
 		break;
 #if defined(USE_IAUTH)
@@ -1525,10 +1493,7 @@ char	*parv[];
 	case 'o' : case 'O' : /* O (and o) lines */
 		report_configured_links(cptr, parv[0], CONF_OPS);
 		break;
-	case 'P' : /* ports listening */
-		report_listeners(sptr, parv[0]);
-		break;
-	case 'p' : /* ircd ping stats */
+	case 'p' : case 'P' : /* ircd ping stats */
 		report_ping(sptr, parv[0]);
 		break;
 	case 'Q' : case 'q' : /* Q lines */
@@ -1869,7 +1834,7 @@ char	*parv[];
 	if (!aconf)
 	    {
 	      sendto_one(sptr,
-			 "NOTICE %s :Connect: Host %s not listed in ircd.conf",
+			 "NOTICE %s :Connect: Host %s not listed in irc.conf",
 			 parv[0], parv[1]);
 	      return 0;
 	    }
@@ -2059,7 +2024,6 @@ char	*parv[];
 	char	killer[HOSTLEN * 2 + USERLEN + 5];
 
 	strcpy(killer, get_client_name(sptr, TRUE));
-	SPRINTF(buf, "RESTART by %s", get_client_name(sptr, TRUE));
 	for (i = 0; i <= highest_fd; i++)
 	    {
 		if (!(acptr = local[i]))
@@ -2081,6 +2045,7 @@ char	*parv[];
 	    }
 	flush_connections(me.fd);
 
+	SPRINTF(buf, "RESTART by %s", get_client_name(sptr, TRUE));
 	restart(buf);
 	/*NOT REACHED*/
 	return 0;
@@ -2184,7 +2149,7 @@ char	*parv[];
 		case STAT_ME:
 			break;
 		case STAT_UNKNOWN:
-			if (IsAnOper(sptr) || (MyPerson(sptr) && SendWallops(sptr)))
+			if (IsAnOper(sptr) || MyClient(sptr))
 				sendto_one(sptr,
 					   rpl_str(RPL_TRACEUNKNOWN, parv[0]),
 					   class, name);
@@ -2193,6 +2158,15 @@ char	*parv[];
 			/* Only opers see users if there is a wildcard
 			 * but anyone can see all the opers.
 			 */
+/*
+			if (IsOper(sptr)  &&
+			    (MyClient(sptr) || !(dow && IsInvisible(acptr)))
+			    || !dow || IsAnOper(acptr))
+			    {
+			if (IsOper(sptr) && !(dow || IsInvisible(acptr)) ||
+			    (IsOper(sptr) && IsLocal(sptr)) ||
+			    !dow || IsAnOper(acptr))
+*/
 			if (IsAnOper(acptr))
 				sendto_one(sptr,
 					   rpl_str(RPL_TRACEOPERATOR, parv[0]),
@@ -2201,6 +2175,17 @@ char	*parv[];
 				sendto_one(sptr,
 					   rpl_str(RPL_TRACEUSER, parv[0]),
 					   class, name);
+/*
+			    {
+				if (IsAnOper(acptr))
+					sendto_one(sptr,
+						   rpl_str(RPL_TRACEOPERATOR,
+						   parv[0]), class, name);
+				else
+					sendto_one(sptr, rpl_str(RPL_TRACEUSER,
+						   parv[0]), class, name);
+			    }
+*/
 			break;
 		case STAT_SERVER:
 			if (acptr->serv->user)
@@ -2501,20 +2486,4 @@ aClient	*cptr;
 	}
     ircstp->is_cklno++;
     return -1;
-}
-
-static void report_listeners(aClient *sptr, char *to)
-{
-	aConfItem *tmp;
-
-	for (tmp = conf; tmp; tmp = tmp->next)
-	{
-		if ((tmp->status & CONF_LISTEN_PORT))
-		{
-			sendto_one(sptr, ":%s %d %s :%s %d %d", ME,
-				RPL_STATSDEFINE, to, BadPtr(tmp->host) ?
-				"*" : tmp->host, tmp->port,
-				tmp->clients);
-		}
-	}
 }

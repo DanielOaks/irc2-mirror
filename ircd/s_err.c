@@ -18,7 +18,7 @@
  */
 
 #ifndef lint
-static  char rcsid[] = "@(#)$Id: s_err.c,v 1.24.2.6 2003/10/10 22:30:37 chopin Exp $";
+static  char rcsid[] = "@(#)$Id: s_err.c,v 1.24 1999/02/22 21:38:33 kalt Exp $";
 #endif
 
 #include "os.h"
@@ -62,7 +62,7 @@ static	Numeric	numeric_errors[] = {
 /* 413 */	{ ERR_NOTOPLEVEL, "%s :No toplevel domain specified" },
 /* 414 */	{ ERR_WILDTOPLEVEL, "%s :Wildcard in toplevel Domain" },
 /* 415 */	{ ERR_BADMASK, "%s :Bad Server/host mask" },
-/* 416 */	{ ERR_TOOMANYMATCHES, "%s :Output too long (try locally)" },
+/* 416 */	{ ERR_TOOMANYMATCHES, "%s %s :Output too long (try locally)" },
 		{ 0, (char *)NULL },
 		{ 0, (char *)NULL },
 		{ 0, (char *)NULL },
@@ -79,7 +79,7 @@ static	Numeric	numeric_errors[] = {
 		{ 0, (char *)NULL },
 		{ 0, (char *)NULL },
 /* 431 */	{ ERR_NONICKNAMEGIVEN, ":No nickname given" },
-/* 432 */	{ ERR_ERRONEOUSNICKNAME, "%s :Erroneous Nickname" },
+/* 432 */	{ ERR_ERRONEUSNICKNAME, "%s :Erroneous Nickname" },
 /* 433 */	{ ERR_NICKNAMEINUSE, "%s :Nickname is already in use." },
 /* 434 */	{ ERR_SERVICENAMEINUSE, (char *)NULL },
 /* 435 */	{ ERR_SERVICECONFUSED, (char *)NULL },
@@ -329,7 +329,7 @@ static	Numeric	numeric_replies[] = {
 /* 252 */	{ RPL_LUSEROP, "%d :operators online" },
 /* 253 */	{ RPL_LUSERUNKNOWN, "%d :unknown connections" },
 /* 254 */	{ RPL_LUSERCHANNELS, "%d :channels formed" },
-/* 255 */	{ RPL_LUSERME, ":I have %d users, %d services and %d servers" },
+/* 255 */	{ RPL_LUSERME, ":I have %d clients, %d services and %d servers" },
 /* 256 */	{ RPL_ADMINME, ":Administrative info about %s" },
 /* 257 */	{ RPL_ADMINLOC1, ":%s" },
 /* 258 */	{ RPL_ADMINLOC2, ":%s" },
@@ -354,8 +354,8 @@ char	*to;
 	num -= numeric_errors[0].num_val;
 	if (num < 0 || num > ERR_USERSDONTMATCH)
 		SPRINTF(numbuff,
-			":%s %d %s :INTERNAL ERROR: BAD NUMERIC! %d",
-			ME, numeric, to, num);
+			":%%s %d %%s :INTERNAL ERROR: BAD NUMERIC! %d",
+			numeric, num);
 	else
 	    {
 		nptr = &numeric_errors[num];
@@ -364,8 +364,8 @@ char	*to;
 			numeric, num, nptr, nptr->num_val, nptr->num_form));
 		if (!nptr->num_form || !nptr->num_val)
 			SPRINTF(numbuff,
-				":%s %d %s :NO ERROR FOR NUMERIC ERROR %d",
-				ME, numeric, to, num);
+				":%%s %d %%s :NO ERROR FOR NUMERIC ERROR %d",
+				numeric, num);
 		else
 			(void)prepbuf(numbuff, ME, to, nptr->num_val,
 				      nptr->num_form);
@@ -381,7 +381,7 @@ char	*to;
 	Reg	Numeric	*nptr;
 	Reg	int	num = numeric;
 
-	if (num > 100)
+	if (num > 5)
 		num -= (num > 300) ? 300 : 100;
 
 	if (BadPtr(to))		/* for unregistered clients */
@@ -389,8 +389,8 @@ char	*to;
 
 	if (num < 0 || num > 200)
 		SPRINTF(numbuff,
-			":%s %d %s :INTERNAL REPLY ERROR: BAD NUMERIC! %d",
-			ME, numeric, to, num);
+			":%%s %d %%s :INTERNAL REPLY ERROR: BAD NUMERIC! %d",
+			numeric, num);
 	else
 	    {
 		if (numeric > 99)
@@ -402,8 +402,8 @@ char	*to;
 			numeric, num, nptr, nptr->num_val, nptr->num_form));
 		if (!nptr->num_form || !nptr->num_val)
 			SPRINTF(numbuff,
-				":%s %d %s :NO REPLY FOR NUMERIC ERROR %d",
-				ME, numeric, to, num);
+				":%%s %d %%s :NO REPLY FOR NUMERIC ERROR %d",
+				numeric, num);
 		else
 			(void)prepbuf(numbuff, ME, to, nptr->num_val,
 				      nptr->num_form);

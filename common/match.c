@@ -18,7 +18,7 @@
  */
 
 #ifndef lint
-static  char rcsid[] = "@(#)$Id: match.c,v 1.5.2.2 2001/07/04 21:44:40 chopin Exp $";
+static  char rcsid[] = "@(#)$Id: match.c,v 1.5 1999/02/05 22:00:25 kalt Exp $";
 #endif
 
 #include "os.h"
@@ -110,7 +110,7 @@ unsigned char char_atribs[] = {
 /* 16-23 */	CNTRL, CNTRL, CNTRL, CNTRL, CNTRL, CNTRL, CNTRL, CNTRL,
 /* 24-31 */	CNTRL, CNTRL, CNTRL, CNTRL, CNTRL, CNTRL, CNTRL, CNTRL,
 /* space */	PRINT|SPACE,
-/* !"#$%&'( */	PRINT, PRINT, PRINT, PRINT, PRINT, PRINT, PRINT, PRINT,
+/* !""#$%&'( */	PRINT, PRINT, PRINT, PRINT, PRINT, PRINT, PRINT, PRINT,
 /* )*+,-./ */	PRINT, PRINT, PRINT, PRINT, PRINT, PRINT, PRINT,
 /* 0123 */	PRINT|DIGIT, PRINT|DIGIT, PRINT|DIGIT, PRINT|DIGIT,
 /* 4567 */	PRINT|DIGIT, PRINT|DIGIT, PRINT|DIGIT, PRINT|DIGIT,
@@ -127,7 +127,7 @@ unsigned char char_atribs[] = {
 /* VWX */	PRINT|ALPHA, PRINT|ALPHA, PRINT|ALPHA,
 /* YZ[ */	PRINT|ALPHA, PRINT|ALPHA, PRINT|ALPHA,
 /* \]^ */	PRINT|ALPHA, PRINT|ALPHA, PRINT|ALPHA,
-/* _`  */	PRINT, PRINT,
+/* _   */	PRINT,
 /* abc */	PRINT|ALPHA, PRINT|ALPHA, PRINT|ALPHA,
 /* def */	PRINT|ALPHA, PRINT|ALPHA, PRINT|ALPHA,
 /* ghi */	PRINT|ALPHA, PRINT|ALPHA, PRINT|ALPHA,
@@ -171,9 +171,6 @@ char	*mask, *name;
 	Reg	u_char	*m = (u_char *)mask, *n = (u_char *)name;
 	char	*ma = mask, *na = name;
 	int	wild = 0, q = 0, calls = 0;
-
-	if (!*mask)
-		return 1;
 
 	while (1)
 	    {
@@ -273,7 +270,7 @@ char	*pattern;
 
 
 /*
-**  Case insensitive comparison of two null terminated strings.
+**  Case insensitive comparison of two NULL terminated strings.
 **
 **	returns	 0, if s1 equal to s2
 **		<0, if s1 lexicographically less than s2

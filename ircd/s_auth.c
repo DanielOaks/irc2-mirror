@@ -18,7 +18,7 @@
  */
 
 #ifndef lint
-static  char rcsid[] = "@(#)$Id: s_auth.c,v 1.43.2.7 2003/10/11 20:04:29 chopin Exp $";
+static  char rcsid[] = "@(#)$Id: s_auth.c,v 1.43 1999/07/02 16:38:21 kalt Exp $";
 #endif
 
 #include "os.h"
@@ -85,7 +85,7 @@ aClient *cptr;
 	    }
 	else
 	    {
-		istat.is_authmem += strlen(cptr->auth) + 1;
+		istat.is_authmem += sizeof(cptr->auth);
 		istat.is_auth += 1;
 	    }
 }
@@ -114,45 +114,26 @@ int
 vsendto_iauth(char *pattern, va_list va)
 #endif
 {
-	static	char	abuf[BUFSIZ], *p;
-	int	i, len;
-
-	if (adfd < 0)
-		return -1;
+    static char abuf[BUFSIZ];
 
 #if ! USE_STDARG
-	sprintf(abuf, pattern, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10);
-#else
-	vsprintf(abuf, pattern, va);
-#endif
-	strcat(abuf, "\n");
+    sprintf(abuf, pattern, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10);
+#else   
+    vsprintf(abuf, pattern, va);
+#endif  
+    strcat(abuf, "\n");
 
-	p = abuf;
-	len = strlen(p);
-
-	do
+    if (adfd < 0)
+	    return -1;
+    if (write(adfd, abuf, strlen(abuf)) != strlen(abuf))
 	{
-		i = write(adfd, abuf, len);
-
-		if (i == -1)
-		{
-			if (errno != EAGAIN && errno != EWOULDBLOCK)
-			{
-				sendto_flag(SCH_AUTH, "Aiiie! lost slave "
-					"authentication process");
-				close(adfd);
-				adfd = -1;
-				start_iauth(0);
-				return -1;
-			}
-			i = 0;
-		}
-		p += i;
-		len -= i;
+	    sendto_flag(SCH_AUTH, "Aiiie! lost slave authentication process");
+	    close(adfd);
+	    adfd = -1;
+	    start_iauth(0);
+	    return -1;
 	}
-	while (len > 0);
-
-	return 0;
+    return 0;
 }
 
 # if USE_STDARG
@@ -199,7 +180,6 @@ read_iauth()
 			    sendto_flag(SCH_AUTH, "Aiiie! lost slave authentication process (errno = %d)", errno);
 			    close(adfd);
 			    adfd = -1;
-			    olen = 0;
 			    start_iauth(0);
 			}
 		    break;
@@ -351,14 +331,8 @@ read_iauth()
 			    start = end;
 			    continue;
 			}
-#ifndef	INET6
 		    sprintf(tbuf, "%c %d %s %u ", start[0], i,
 			    inetntoa((char *)&cptr->ip), cptr->port);
-#else
-		    sprintf(tbuf, "%c %d %s %u ", start[0], i,
-			    inetntop(AF_INET6, (char *)&cptr->ip, 
-			    mydummy, MYDUMMY_SIZE), cptr->port);
-#endif
 		    if (strncmp(tbuf, start, strlen(tbuf)))
 			{
 			    /* this is fairly common and can be ignored */
@@ -386,7 +360,7 @@ read_iauth()
 				}
 			    if (cptr->auth != cptr->username)
 				{   
-				    istat.is_authmem -= strlen(cptr->auth) + 1;
+				    istat.is_authmem -= sizeof(cptr->auth);
 				    istat.is_auth -= 1;
 				    MyFree(cptr->auth);
 				}
@@ -407,7 +381,7 @@ read_iauth()
 				}
 			    if (cptr->auth != cptr->username)
 				{
-				    istat.is_authmem -= strlen(cptr->auth) + 1;
+				    istat.is_authmem -= sizeof(cptr->auth);
 				    istat.is_auth -= 1;
 				    MyFree(cptr->auth);
 				}
@@ -469,9 +443,10 @@ read_iauth()
 			}
 		    start = end;
 		}
-	    olen -= start - buf;
-	    if (olen)
-		    memcpy(obuf, start, olen);
+	    if (start != buf+olen)
+		    bcopy(start, obuf, olen = (buf+olen)-start+1);
+	    else
+		    olen = 0;
 	}
 }
 
@@ -810,7 +785,7 @@ Reg	aClient	*cptr;
 	ircstp->is_asuc++;
 	if (cptr->auth != cptr->username)/*impossible, but...*/
 	    {
-		istat.is_authmem -= strlen(cptr->auth) + 1;
+		istat.is_authmem -= sizeof(cptr->auth);
 		istat.is_auth -= 1;
 		MyFree(cptr->auth);
 	    }
