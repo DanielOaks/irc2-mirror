@@ -17,6 +17,18 @@
  *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+/*
+ * $Id: dbuf.c,v 6.1 1991/07/04 21:03:54 gruner stable gruner $
+ *
+ * $Log: dbuf.c,v $
+ * Revision 6.1  1991/07/04  21:03:54  gruner
+ * Revision 2.6.1 [released]
+ *
+ * Revision 6.0  1991/07/04  18:04:48  gruner
+ * frozen beta revision 2.6.1
+ *
+ */
+
 /* -- Jto -- 20 Jun 1990
  * extern void free() fixed as suggested by
  * gruner@informatik.tu-muenchen.de
@@ -41,52 +53,21 @@
 #include "dbuf.h"
 #include "sys.h"
 
-int	dbufalloc = 0, dbufblocks = 0;
-static	dbufbuf	*freelist = NULL;
-
 /* This is a dangerous define because a broken compiler will set DBUFSIZ
 ** to 4, which will work but will be very inefficient. However, there
 ** are other places where the code breaks badly if this is screwed
 ** up, so... -- Wumpus
 */
 
-/*#define DBUFSIZ sizeof(((dbufbuf *)0)->data)*/
-#define	DBUFSIZ	2044
+#define DBUFSIZ sizeof(((dbufbuf *)0)->data)
 
-/*
-** dbuf_alloc - allocates a dbufbuf structure either from freelist or
-** creates a new one.
-*/
-static dbufbuf *dbuf_alloc()
-{
-	Reg1	dbufbuf	*dbptr;
-
-	dbufalloc++;
-	if (dbptr = freelist)
-	    {
-		freelist = freelist->next;
-		return dbptr;
-	    }
-	dbufblocks++;
-	return (dbufbuf *)calloc(1,sizeof(dbufbuf));
-}
-/*
-** dbuf_free - return a dbufbuf structure to the freelist
-*/
-static	void	dbuf_free(ptr)
-Reg1	dbufbuf	*ptr;
-{
-	dbufalloc--;
-	ptr->next = freelist;
-	freelist = ptr;
-}
 /*
 ** This is called when malloc fails. Scrap the whole content
 ** of dynamic buffer and return -1. (malloc errors are FATAL,
 ** there is no reason to continue this buffer...). After this
 ** the "dbuf" has consistent EMPTY status... ;)
 */
-static int dbuf_malloc_error(dyn)
+static int malloc_error(dyn)
 dbuf *dyn;
     {
 	dbufbuf *p;
@@ -105,11 +86,11 @@ dbuf *dyn;
 int dbuf_put(dyn, buf, length)
 dbuf *dyn;
 char *buf;
-long length;
+long int length;
     {
-	Reg1 dbufbuf **h, *d;
-	Reg2 long int nbr, off;
-	Reg3 int chunk;
+	dbufbuf **h, *d;
+	long int nbr, off;
+	int chunk;
 
 	off = (dyn->offset + dyn->length) % DBUFSIZ;
 	nbr = (dyn->offset + dyn->length) / DBUFSIZ;
@@ -129,8 +110,8 @@ long length;
 	    {
 		if ((d = *h) == NULL)
 		    {
-			if ((d = (dbufbuf *)dbuf_alloc()) == NULL)
-				return dbuf_malloc_error(dyn);
+			if ((d = (dbufbuf *)malloc(sizeof(dbufbuf))) == NULL)
+				return malloc_error(dyn);
 			*h = d;
 			d->next = NULL;
 		    }
@@ -145,10 +126,10 @@ long length;
 	return 1;
     }
 
-
+		
 char *dbuf_map(dyn,length)
 dbuf *dyn;
-long *length;
+long int *length;
     {
 	if (dyn->head == NULL)
 	    {
@@ -161,9 +142,9 @@ long *length;
 	return (dyn->head->data + dyn->offset);
     }
 
-int	dbuf_delete(dyn,length)
-dbuf	*dyn;
-long	length;
+int dbuf_delete(dyn,length)
+dbuf *dyn;
+long int length;
     {
 	dbufbuf *d;
 	int chunk;
@@ -183,17 +164,17 @@ long	length;
 			d = dyn->head;
 			dyn->head = d->next;
 			dyn->offset = 0;
-			dbuf_free(d);
+			free((void *)d);
 		    }
 		chunk = DBUFSIZ;
 	    }
 	return 0;
     }
 
-long	dbuf_get(dyn,buf,length)
-dbuf	*dyn;
-char	*buf;
-long	length;
+long int dbuf_get(dyn,buf,length)
+dbuf *dyn;
+char *buf;
+long int length;
     {
 	long int moved = 0;
 	long int chunk;
@@ -211,3 +192,5 @@ long	length;
 	    }
 	return moved;
     }
+
+

@@ -18,12 +18,6 @@
  *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-/* -- djr -- 20 Feb 1992
- * Reversed the order of the params for attach_conf().
- * detach_conf() and attach_conf() are now the same:
- * function_conf(aClient *, aConfItem *)
- */
-
 /* -- Jto -- 20 Jun 1990
  * Added gruner's overnight fix..
  */
@@ -55,10 +49,10 @@ char conf_id[] = "conf.c v2.0 (c) 1988 University of Oulu, Computing Center\
 #include "sys.h"
 #include "numeric.h"
 #include <stdio.h>
-#include "netdb.h"
+#include <netdb.h>
 #include <sys/socket.h>
 #ifdef __hpux
-#include "inet.h"
+#include <arpa/inet.h>
 #endif
 
 aConfItem *conf = NULL;
@@ -185,7 +179,7 @@ aClient *cptr;
 aConfItem *aconf;
 {
   Reg1 Link **link, *tmp;
-  int status, illegal;
+  int status;
 
   link = &(cptr->confs);
 
@@ -193,31 +187,28 @@ aConfItem *aconf;
     if ((*link)->value.aconf == aconf) {
       if ((aconf) && (Class(aconf))) {
 	status = aconf->status;
-	illegal = IsIllegal(aconf) ? -1 : 1;
-	aconf->status *= illegal;
+	if (IsIllegal(aconf))
+	  aconf->status *= CONF_ILLEGAL;
 	if (aconf->status & (CONF_CLIENT | CONF_CONNECT_SERVER | CONF_LOCOP |
 	    CONF_OPERATOR | CONF_NOCONNECT_SERVER))
 	  if (ConfLinks(aconf) > 0)
 	     --ConfLinks(aconf);
-	aconf->status *= illegal;
         if (ConfMaxLinks(aconf) == -1 && ConfLinks(aconf) == 0)
-	 {
 	  free(Class(aconf));
-	  Class(aconf) = (aClass *)NULL;
-	 }
       }
       aconf->status = status;
       if (aconf != NULL && --aconf->clients == 0 && IsIllegal(aconf))
 	free_conf(aconf);
       tmp = *link;
-      *link = tmp->next;
+      *link = (*link)->next;
       free(tmp);
     } else
       link = &((*link)->next);
   }
 }
 
-static int IsAttached(aconf, cptr)
+static int
+IsAttached(aconf, cptr)
 aConfItem *aconf;
 aClient *cptr;
 {
@@ -237,7 +228,7 @@ aClient *cptr;
 **	connection). Note, that this automaticly changes the
 **	attachment if there was an old one...
 */
-attach_conf(cptr, aconf)
+attach_conf(aconf,cptr)
 aConfItem *aconf;
 aClient *cptr;
 {
@@ -245,7 +236,7 @@ aClient *cptr;
   if (IsAttached(aconf, cptr))
     return 1;
   if ((aconf->status & (CONF_LOCOP | CONF_OPERATOR)) &&
-      ConfLinks(aconf) >= ConfMaxLinks(aconf) && ConfMaxLinks(aconf) > 0)
+      ConfLinks(aconf) >= ConfMaxLinks(aconf))
     return 0;
   link = (Link *) MyMalloc(sizeof(Link));
   link->next = cptr->confs;
@@ -286,11 +277,11 @@ char *name;
 int statmask;
 {
   Reg1 aConfItem *tmp;
-  aConfItem *first = NULL;
+  aConfItem *first = (aConfItem *) 0;
   int len = strlen(name);
   
-  if (!name || len > HOSTLEN)
-    return NULL;
+  if (len > HOSTLEN)
+    return (aConfItem *) 0;
 
   for (tmp = conf; tmp; tmp = tmp->next) {
     if ((tmp->status & statmask) &&
@@ -298,13 +289,13 @@ int statmask;
 	(matches(tmp->name, name) == 0)) {
       if (!first)
 	first = tmp;
-      attach_conf(cptr, tmp);
+      attach_conf(tmp, cptr);
     } else if ((tmp->status & statmask) &&
 	       (tmp->status & (CONF_CONNECT_SERVER|CONF_NOCONNECT_SERVER)) &&
 	       (mycmp(tmp->name, name) == 0)) {
       if (!first)
 	first = tmp;
-      attach_conf(cptr, tmp);
+      attach_conf(tmp, cptr);
     }
   }
   return(first);
@@ -319,11 +310,11 @@ char *host;
 int statmask;
 {
   Reg1 aConfItem *tmp;
-  aConfItem *first = NULL;
+  aConfItem *first = (aConfItem *) 0;
   int len = strlen(host);
   
-  if (!host || len > HOSTLEN)
-    return NULL;
+  if (len > HOSTLEN)
+    return (aConfItem *) 0;
 
   for (tmp = conf; tmp; tmp = tmp->next) {
     if ((tmp->status & statmask) &&
@@ -331,13 +322,13 @@ int statmask;
 	(matches(tmp->host, host) == 0)) {
       if (!first)
 	first = tmp;
-      attach_conf(cptr, tmp);
+      attach_conf(tmp, cptr);
     } else if ((tmp->status & statmask) &&
 	       (tmp->status & (CONF_CONNECT_SERVER|CONF_NOCONNECT_SERVER)) &&
 	       (mycmp(tmp->host, host) == 0)) {
       if (!first)
 	first = tmp;
-      attach_conf(cptr, tmp);
+      attach_conf(tmp, cptr);
     }
   }
   return(first);
@@ -403,9 +394,9 @@ int statmask;
     tmp = link->value.aconf;
     if ((tmp->status & statmask) &&
 	(((tmp->status & (CONF_NOCONNECT_SERVER | CONF_CONNECT_SERVER))
-	 && mycmp(tmp->name, name) == 0) ||
+	 && (!name || mycmp(tmp->name, name) == 0)) ||
 	((tmp->status & (CONF_NOCONNECT_SERVER | CONF_CONNECT_SERVER)) == 0
-	 && matches(tmp->name, name) == 0)))
+	 && (!name || matches(tmp->name, name) == 0))))
       break;
   }
   return(link ? tmp : (aConfItem *) 0);
@@ -494,7 +485,6 @@ int rehashing;
 	aConfItem *aconf;
 	struct hostent *hp;
 
-	debug(DEBUG_DEBUG, "initconf(%d)", rehashing);
 	if (!(fd = fopen(configfile,"r")))
 		return(-1);
 	while (fgets(line,sizeof(line)-1,fd))
@@ -616,17 +606,20 @@ int rehashing;
 		if (aconf->status & CONF_CLASS) {
 		  add_class(atoi(aconf->host), atoi(aconf->passwd),
 			   atoi(aconf->name), aconf->port);
-		  conf = conf->next;
-		  free_conf(aconf);
-		  continue;
 		}
 
 		if (aconf->status & (CONF_CONNECT_SERVER |
-		    CONF_NOCONNECT_SERVER)) {
+		    CONF_NOCONNECT_SERVER | CONF_CLASS)) {
 		  if (ncount > MAXCONFLINKS || ccount > MAXCONFLINKS ||
 		      aconf->host && index(aconf->host, '*')) {
+		    if (aconf->host)
+		      free(aconf->host);
+		    if (aconf->passwd)
+		      free(aconf->passwd);
+		    if (aconf->name)
+		      free(aconf->name);
 		    conf = aconf->next;
-		    free_conf(aconf);
+		    free(aconf);
 		    continue;
 		  }
 		}
@@ -636,8 +629,7 @@ int rehashing;
                 ** to the correct class record. -avalon
                 */
 		if (aconf->status & (CONF_CONNECT_SERVER | CONF_CLIENT |
-		    CONF_NOCONNECT_SERVER | CONF_OPERATOR | CONF_LOCOP |
-		    CONF_SERVICE )) {
+		    CONF_NOCONNECT_SERVER | CONF_OPERATOR | CONF_LOCOP)) {
 		  if (Class(aconf) == 0)
 		    Class(aconf) = find_class(0);
 		  if (MaxLinks(Class(aconf)) < 0)
@@ -695,39 +687,25 @@ int rehashing;
 	return (0);
     }
 
-int	find_kill(cptr)
-aClient	*cptr;
-{
-	char	reply[256], *host, *name;
+int find_kill(host, name, reply)
+char *host, *name, *reply;
+    {
 	aConfItem *tmp;
-	static	int	check_time_interval();
-
-	host = cptr->sockhost;
-	name = cptr->name;
+	static int check_time_interval();
+	int rc = ERR_YOUREBANNEDCREEP;
 
 	if (strlen(host)  > HOSTLEN || (name ? strlen(name) : 0) > HOSTLEN)
 		return (0);
-
-	reply[0] = '\0';
-
+	strcpy(reply, ":%s %d %s :*** Ghosts are not allowed on IRC.");
 	for (tmp = conf; tmp; tmp = tmp->next)
  		if ((matches(tmp->host, host) == 0) &&
 		    tmp->status == CONF_KILL &&
  		    (name == NULL || matches(tmp->name, name) == 0))
  			if (BadPtr(tmp->passwd) ||
- 			    check_time_interval(tmp->passwd, reply))
+ 			   (rc = check_time_interval(tmp->passwd, reply)))
  			break;
-
-	if (reply[0])
-		sendto_one(cptr, reply,
-			   me.name, ERR_YOUREBANNEDCREEP, cptr->name);
-	else if (tmp)
-		sendto_one(cptr,
-			   ":%s %d %s :*** Ghosts are not allowed on IRC.",
-			   me.name, ERR_YOUREBANNEDCREEP, cptr->name);
-
- 	return (tmp ? -1 : 0);
- }
+ 		return (tmp ? rc : 0);
+     }
 
 #ifdef R_LINES
 /* find_restrict works against host/name and calls an outside program 
@@ -739,80 +717,47 @@ aClient	*cptr;
    begins with neither 'Y' or 'N' the default is to let the person on.
    It returns a value of 0 if the user is to be let through -Hoppie  */
   
-int	find_restrict(cptr)
-aClient	*cptr;
-{
+int find_restrict(host, name, reply)
+char *host, *name, *reply;
+    {
 	aConfItem *tmp;
-	char	cmdline[132], reply[80], temprpl[80];
-	char	*rplhold = reply, *host, *name, *s;
-	char	rplchar='Y';
-	FILE	*fp;
-	int	hlen, nlen, rc = 0;
-
-	host = cptr->sockhost;
-	name = cptr->name;
-	hlen = strlen(host);
-	name = strlen(name);
+	char cmdline[132],*rplhold=reply,temprpl[80],rplchar='Y';
+	FILE *fp;
+	int rc = 0;
 
 	for (tmp = conf; tmp; tmp = tmp->next)
 	  if (tmp->status == CONF_RESTRICT &&
 	      (host == NULL || (matches(tmp->host, host) == 0)) &&
 	      (name == NULL || matches(tmp->name, name) == 0))
 	    {
+	      bzero(rplhold,5);
 	      if (BadPtr(tmp->passwd))
 		sendto_ops("Program missing on R-line %s/%s, ignoring.",
 			   name,host);
 	      else
 		{
-		  if (strlen(tmp->passwd) + hlen + nlen > sizeof(cmdline))
-		    {
-		      sendto_ops("R-line command Too Long! %s %s %s",
-				tmp->passwd, name, host);
-		      continue;
-		    }
-		  sprintf(cmdline, "%s %s %s", tmp->passwd, name, host);
-
-		  if ((fp = popen(cmdline,"r")) == NULL)
-		    {
-		      sendto_ops("Couldn't run '%s' for R-line %s/%s",
-				 tmp->passwd, name, host);
-		      continue;
-		    }
+		  sprintf(cmdline,"%s %s %s",tmp->passwd,name,host);
+		  if ((fp=popen(cmdline,"r"))==NULL)
+		    sendto_ops("Couldn't run '%s' for R-line %s/%s, ignoring.",
+			       tmp->passwd,name,host);
 		  else
-		    {
-		      reply[0] = '\0';
-		      while (fgets(temprpl, sizeof(temprpl)-1, fp) != EOF)
-			{
-			  if (s = index(temprpl, '\n'))
-			      *s = '\0';
-			  if (strlen(temprpl) + strlen(reply) < 80)
-			      sprintf(rplhold, "%s %s", rplhold, temprpl);
-			  else
-			      sendto_ops("R-line %s/%s: reply too long!",
-					 name,host);
-			}
-		    }
+		    while (fscanf(fp,"%[^\n]\n",temprpl)!=EOF)
+		      if (strlen(temprpl)+strlen(reply) < 131)
+			sprintf(rplhold,"%s %s",rplhold,temprpl);
+		      else
+			sendto_ops("R-line %s/%s: reply too long, truncating",
+				   name,host);
 		  pclose(fp);
-
 		  while (*rplhold == ' ') rplhold++;
 		  rplchar = *rplhold; /* Pull out the yes or no */
 		  while (*rplhold != ' ') rplhold++;
 		  while (*rplhold == ' ') rplhold++;
 		  strcpy(reply,rplhold);
-		  rplhold = reply;
-
-		  if (rc = (rplchar == 'n' || rplchar == 'N'))
-		      break;
 		}
+	      if (rc=(rplchar == 'n' || rplchar == 'N'))
+		break;
 	    }
-	if (rc)
-	    {
-		sendto_one(cptr, ":%s %d %s :Restriction: %s",
-			   me.name, ERR_YOUREBANNEDCREEP, cptr->name,
-			   reply);
-		return -1;
-	    }
-	return 0;
+	return (rc);
       }
 #endif
 
@@ -821,7 +766,7 @@ aClient	*cptr;
 ** check against a set of time intervals
 */
 
-static	int check_time_interval(interval, reply)
+static int check_time_interval(interval, reply)
 char	*interval, *reply;
 {
 	struct tm *tptr;

@@ -43,11 +43,11 @@ CFLAGS= -g -I${INCLUDE}
 #and otherwise:
 #IRCDLIBS=
 
-OBJS=channel.o ircd.o list.o s_bsd.o s_conf.o s_msg.o s_numeric.o\
-     whowas.o s_debug.o class.o hash.o s_misc.o
+OBJS=channel.o date.o ircd.o list.o s_bsd.o s_conf.o s_msg.o s_numeric.o\
+     whowas.o s_debug.o class.o hash.o
 
-SRC=channel.c ircd.c list.c s_bsd.c s_conf.c s_msg.c s_numeric.c\
-     whowas.c s_debug.c class.c hash.c s_misc.c
+SRC=channel.c date.c ircd.c list.c s_bsd.c s_conf.c s_msg.c s_numeric.c\
+     whowas.c s_debug.c class.c hash.c
 
 COMMONOBJS=../common/bsd.o ../common/dbuf.o \
            ../common/packet.o ../common/send.o\
@@ -56,10 +56,6 @@ COMMONOBJS=../common/bsd.o ../common/dbuf.o \
 COMMONSRC=../common/bsd.c ../common/dbuf.c \
 	  ../common/packet.c ../common/send.c\
 	  ../common/match.c ../common/parse.c ../common/support.c
-
-RESOBJS= ../res/res_init.o ../res/res_comp.o ../res/res_query.o \
-	../res/res_debug.o ../res/res_mkquery.o ../res/res_send.o \
-	../res/gethostnamadr.o ../res/sethostent.o
 
 MAKE = make 'CFLAGS=${CFLAGS}' 'CC=${CC}'
 
@@ -71,12 +67,6 @@ ircd: $(OBJS) $(COMMONOBJS) ../include/patchlevel.h
 	$(SHELL) version.c.SH
 	$(CC) $(CFLAGS) -c version.c
 	$(CC) -g $(OBJS) $(COMMONOBJS) version.o -o ircd $(IRCDLIBS)
-	chmod $(IRCDMODE) ircd
-
-bindircd: $(RESOBJS) $(OBJS) $(COMMONOBJS) ../include/patchlevel.h
-	$(SHELL) version.c.SH
-	$(CC) $(CFLAGS) -c version.c
-	$(CC) -g $(RESOBJS) $(OBJS) $(COMMONOBJS) version.o -o ircd $(IRCDLIBS)
 	chmod $(IRCDMODE) ircd
 
 saber: $(SRC)
@@ -104,23 +94,6 @@ saber: $(SRC)
 		     ../include/common.h
 	(cd ../common; ${MAKE} build);
 
-../res/res_init.o: ../res/res_init.c ../include/resolv.h
-	(cd ../res; ${MAKE} build);
-../res/res_comp.o: ../res/res_comp.c ../include/resolv.h
-	(cd ../res; ${MAKE} build);
-../res/res_debug.o: ../res/res_debug.c ../include/resolv.h
-	(cd ../res; ${MAKE} build);
-../res/res_query.o: ../res/res_query.c ../include/resolv.h
-	(cd ../res; ${MAKE} build);
-../res/res_mkquery.o: ../res/res_mkquery.c ../include/resolv.h
-	(cd ../res; ${MAKE} build);
-../res/res_send.o: ../res/res_send.c ../include/resolv.h
-	(cd ../res; ${MAKE} build);
-../res/gethostnamadr.o: ../res/gethostnamadr.c ../include/resolv.h
-	(cd ../res; ${MAKE} build);
-../res/sethostent.o: ../res/sethostent.c ../include/resolv.h
-	(cd ../res; ${MAKE} build);
-
 clean:
 	${RM} -f *.o *~ core ircd version.c #* *.bak
 
@@ -131,6 +104,7 @@ depend:
 
 channel.o: ../include/struct.h ../include/config.h ../include/dbuf.h
 channel.o: ../include/numeric.h channel.h
+date.o: ../include/struct.h ../include/config.h ../include/dbuf.h
 ircd.o: ../include/struct.h ../include/config.h
 ircd.o: ../include/dbuf.h ../include/numeric.h
 list.o: ../include/struct.h ../include/config.h ../include/dbuf.h
@@ -139,7 +113,6 @@ s_bsd.o: ../include/struct.h ../include/config.h ../include/dbuf.h
 s_bsd.o: ../include/sys.h
 s_conf.o: ../include/struct.h ../include/config.h ../include/numeric.h
 s_conf.o: ../include/dbuf.h ../include/sys.h
-s_misc.o: ../include/struct.h ../include/config.h ../include/dbuf.h
 s_msg.o: ../include/struct.h ../include/config.h
 s_msg.o: ../include/dbuf.h ../include/sys.h channel.h
 s_msg.o: ../include/msg.h ../include/numeric.h ../include/whowas.h
@@ -153,9 +126,3 @@ whowas.o: ../include/whowas.h
 s_debug.o: ../include/struct.h
 class.o: ../include/struct.h ../include/class.h
 hash.o: ../include/struct.h ../include/sys.h ../include/hash.h
-res_init.o: ../include/resolv.h ../include/nameser.h
-res_comp.o: ../include/resolv.h ../include/nameser.h
-res_debug.o: ../include/resolv.h ../include/nameser.h
-res_query.o: ../include/resolv.h ../include/nameser.h
-res_mkquery.o: ../include/resolv.h ../include/nameser.h
-res_send.o: ../include/resolv.h ../include/nameser.h

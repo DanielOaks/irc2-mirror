@@ -28,6 +28,9 @@ INCLUDEDIR=../include
 #otherwise this:
 CFLAGS= -I$(INCLUDEDIR) -g
 
+#use the following on SUN OS without nameserver libraries inside libc
+IRCDLIBS= -lresolv
+#
 #on NeXT other than 2.0:
 # IRCDLIBS=-lsys_s
 #
@@ -50,9 +53,6 @@ SHELL=/bin/sh
 SUBDIRS=common ircd irc
 
 all:	build
-
-sun: all
-	IRCDLIBS=-lresolv
 
 server:
 	@echo 'Making server'; cd ircd; ${MAKE} build; cd ..;

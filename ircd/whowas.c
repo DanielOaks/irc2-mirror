@@ -80,7 +80,7 @@ aClient *cptr;
 
 	if (cptr->name[0] == '\0')
 		return 0; /* No old name defined, no history to save */
-	if ((new = (aName *)MyMalloc(sizeof(aName))) == NULL)
+	if ((new = (aName *)malloc(sizeof(aName))) == NULL)
 		return -1;
 	if ((new->home = (aHome *)cptr->history) == NULL)
 	    {
@@ -88,7 +88,11 @@ aClient *cptr;
 		** A fresh user. Allocate a Home block for the
 		** fixed user specific information.
 		*/
-		new->home = (aHome *)MyMalloc(sizeof(aHome));
+		if ((new->home = (aHome *)malloc(sizeof(aHome))) == NULL)
+		    {
+			free((char *)new);
+			return -1;
+		    }
 		cptr->history = (char *)new->home;
 		new->home->online = cptr;
 		new->home->user = cptr->user;
@@ -199,10 +203,10 @@ char *parv[];
 				   next->home->user->username,
 				   next->home->user->host,
 				   next->home->info);
-			sendto_one(sptr,":%s %d %s %s %s :%s",
+			sendto_one(sptr,":%s %d %s %s :%s",
 				   me.name, 
 				   RPL_WHOISSERVER,
-				   sptr->name, next->name,
+				   sptr->name,
 				   next->home->user->server,
 				   myctime(next->time));
 			if (next->home->user->away)

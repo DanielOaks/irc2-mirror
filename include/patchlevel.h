@@ -16,4 +16,16 @@
  *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-#define PATCHLEVEL "2.7.1e"
+/*
+ * $Id: patchlevel.h,v 6.1 1991/07/04 21:04:33 gruner stable gruner $
+ *
+ * $Log: patchlevel.h,v $
+ * Revision 6.1  1991/07/04  21:04:33  gruner
+ * Revision 2.6.1 [released]
+ *
+ * Revision 6.0  1991/07/04  18:05:04  gruner
+ * frozen beta revision 2.6.1
+ *
+ */
+
+#define PATCHLEVEL "2.7.1"

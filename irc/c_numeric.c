@@ -228,12 +228,8 @@ char *parv[];
 			parv[2], parv[3], parv[4], parv[6]);
 		break;
 	    case RPL_WHOISSERVER:
-		if (parc == 4)
-			sprintf(mybuf, "*** On irc via server %s (%s)",
-				parv[2], parv[3]);
-		else
-			sprintf(mybuf, "*** On irc via server %s (%s)",
-				parv[3], parv[4]);
+		sprintf(mybuf, "*** On irc via server %s (%s)",
+			parv[2], parv[3]);
 		break;
 	    case RPL_WHOISOPERATOR:
 		sprintf(mybuf, "*** %s has a connection to the twilight zone",
@@ -342,7 +338,7 @@ char *parv[];
 	    case RPL_TRACEUSER:
 	    case RPL_TRACESERVICE:
 	    case RPL_TRACENEWTYPE:
-		sprintf(mybuf,"*** %s Class: %s %s %s",
+		sprintf(mybuf,"*** %s Class: %s %s",
 			parv[0], parv[3], parv[2], parv[4]);
 		break;
 	    case RPL_TRACECLASS:

@@ -44,17 +44,17 @@ char s_bsd_id[] = "s_bsd.c v2.0 (c) 1988 University of Oulu, Computing Center\
 #include <sys/socket.h>
 #include <sys/file.h>
 #include <sys/ioctl.h>
-#if defined(__hpux) || defined(apollo)
-#include "inet.h"
+#ifdef __hpux
+#include <arpa/inet.h>
 #endif
-#include "netdb.h"
+#include <netdb.h>
 #include <stdio.h>
 #include <signal.h>
 #include <fcntl.h>
 #include <utmp.h>
 #include <sys/errno.h>
-#include "nameser.h"
-#include "resolv.h"
+#include <arpa/nameser.h>
+#include <resolv.h>
 #include "sock.h"	/* If FD_ZERO isn't define up to this point,  */
 			/* define it (BSD4.2 needs this) */
 
@@ -64,7 +64,7 @@ char s_bsd_id[] = "s_bsd.c v2.0 (c) 1988 University of Oulu, Computing Center\
 
 /*  ...should really start using *.h -files instead of these :-( --msa */
 extern aClient me;
-extern aClient *client, *find_server();
+extern aClient *client;
 extern aConfItem *find_conf(), *find_conf_host();
 extern aConfItem *attach_confs(), *attach_confs_host(), *find_conf_name();
 extern char *get_client_name();
@@ -76,7 +76,7 @@ extern long nextconnect;
 extern int errno;
 
 aClient	*local[MAXCONNECTIONS];
-int	highest_fd = 0, readcalls = 0;
+int	highest_fd = 0;
 
 /*
 ** add_local_domain()
@@ -147,9 +147,6 @@ aClient *cptr;
 
 	debug(DEBUG_ERROR,text,host,strerror(errtmp));
 	sendto_ops(text,host,strerror(errtmp));
-#ifdef USE_SYSLOG
-	syslog(LOG_WARNING,text,host,strerror(errtmp));
-#endif
 	return 0;
     }
 
@@ -211,8 +208,7 @@ int portnum;
 	return(sock);
     }
 
-init_sys(bootopt)
-int	bootopt;
+init_sys()
     {
 	int fd;
 #ifdef sequent
@@ -235,7 +231,7 @@ int	bootopt;
 	if (debugtty < 0)	/* fd 0 opened by inetd */
 	  return 0;
 
-	if (isatty(0) || bootopt & 1)
+	if (isatty(0))
 	    {
 		close(0);
 		if (fork())
@@ -292,260 +288,162 @@ non_ip_addresses(confs)
 }
 
 /*
- * Initialize the various name strings used to store hostnames. This is set
- * from either the server's sockhost (if client fd is a tty or localhost)
- * or from the ip# converted into a string. 0 = success, -1 = fail.
- */
-static	int	check_init(cptr, sockn, full, socka)
-Reg1	aClient	*cptr;
-Reg2	char	*full, *sockn;
-Reg3	struct	sockaddr_in *socka;
+** check_name
+**	Check whether any clients/daemons/operators
+**	are allowed to enter from this host.
+*/
+static int check_name(cptr,hname,flags) /* Local for "check_access" */
+aClient *cptr;
+char *hname;
+int flags;
 {
-	int	len = sizeof(struct sockaddr_in);
-
-	/* If descriptor is a tty, special checking... */
-	if (isatty(cptr->fd))
-	    {
-		strncpy(full, me.sockhost, HOSTLEN);
-		bzero(socka, sizeof(struct sockaddr_in));
-	    }
-	else if (getpeername(cptr->fd, socka, &len) == -1)
-	    {
-		report_error("connect failure: %s :%s", cptr);
-		return -1;
-	    }
-	strcpy(sockn, inet_ntoa(socka->sin_addr));
-	if (inet_netof(socka->sin_addr) == IN_LOOPBACKNET)
-		strncpy(full, me.sockhost, HOSTLEN);
-	else
-		strcpy(full, sockn);
-	cptr->ip.s_addr = socka->sin_addr.s_addr;
-
-	return 0;
+  aConfItem *aconf = NULL;
+  debug(DEBUG_NOTICE,"Checking access for (%s) host", hname);
+  aconf = attach_confs_host(cptr, hname, flags);
+  if (aconf)
+    {
+      /*
+       ** This leaves the name that was actually used in
+       ** accepting the connection into 'sockhost'
+       */
+      strncpyzt(cptr->sockhost, hname, elementsof(cptr->sockhost));
+      debug(DEBUG_NOTICE,"Access ok, host (%s)", hname);
+    }
+    else
+      debug(DEBUG_NOTICE,"Access checked");
+  return (aconf) ? 0 : -1;
 }
 
-#ifdef	CHECK_GETHOST
-struct	hostent	*gethost(sp, len, fam)
-void	*sp;
-int	len, fam;
+/**
+ ** check_access()
+ ** Check if the other end of the connection is allowed to connect to
+ ** this server.
+ **
+ ** returns -2, if no connection is open (closed before access check)
+ **         -1, if no access allowed
+ **          0, if access OK
+ **/
+
+int check_access(cptr, flags, do_server)
+aClient *cptr;
+int flags, do_server;
 {
-	struct	hostent	*hp = NULL, hps, *hp2 = NULL;
-	int	stop = 0;
+  struct sockaddr_in addr;
+  struct hostent *host = (struct hostent *)NULL;
+  char *hname = (char *)NULL;
+  unsigned char *t;
+  int len = sizeof(struct sockaddr_in);
+  int i = 0, usenameserver = 1;
 
-	hp = gethostbyaddr(sp, len, fam);
-	if (!hp)
-		return NULL;
+  bzero(&addr, len);
 
-	hp2 = gethostbyname(hp->h_name);
-	if (!hp2)
-		return NULL;
+  if (isatty(cptr->fd)) /* If descriptor is a tty, special checking... */
+      return check_name(cptr, me.sockhost, flags)-1;
+  if (getpeername(cptr->fd, &addr, &len) == -1)
+    {
+      report_error("Failed in connecting to %s :%s", cptr);
+      return -2;
+    }
+  if (do_server)
+    {
+      if (IsUnknown(cptr) && !index(cptr->name, '*'))
+	{
+	  if (attach_confs(cptr, cptr->name, flags)==(aConfItem *)NULL)
+	    {
+	      strncpy(cptr->sockhost, inet_ntoa(addr.sin_addr),
+			sizeof(cptr->sockhost));
+	      return -1;
+	    }
+	}
+      else if (IsConnecting(cptr) || IsHandshake(cptr))
+	return (cptr->confs) ? 0 : -1;
+    /*
+     * Check if there is any meaning with doing nameserver lookups.
+     * If all config lines only contain numeric IP-addresses there isn't
+     * much meaning doing name server lookups that can cost long lags.
+     */
+      usenameserver = non_ip_addresses(cptr->confs);
+    }
+  *cptr->sockhost = '\0';
+  /*
+  ** If IP-address is localhost, try with the servers sockhost
+  ** (as requested by EPS).
+  **
+  ** ...if ULTRIX doesn't have inet_netof(), then just make
+  ** that function or #if this out for ULTRIX..  --msa
+  */
+  if ( (inet_netof(addr.sin_addr) == IN_LOOPBACKNET) &&
+       check_name(cptr, me.sockhost, flags))
+    return 0;
 
-	for (i = 0; !stop && hp->h_addr_list[i]; i++)
-		for (j = 0; !stop && hp2->h_addr_list[j]; j++)
-			if (!bcmp(hp->h_addr_list[i],
-				  hp2->h_addr_list[j], sizeof(long))
-				stop = 1;
-	if (stop)
-		return hp;
-	return NULL;
+  /* To be able to fully utilize the benefits of having an special alias
+   * for the host running ircd at a site, we do first a gethostbyname and
+   * check if the socket address is among the returned. In that case
+   * all is ok. This check should be the normal to pass...
+   */
+  if (do_server && find_conf_host(cptr->confs, cptr->name, flags))
+    {
+      if (host = gethostbyname(cptr->name))
+        for(i = 0; host->h_addr_list[i]; i++)
+	 {
+	  debug(DEBUG_DNS,"Found host %s for %s",
+		inet_ntoa(&host->h_addr_list[i]), cptr->name);
+	  if(!bcmp(host->h_addr_list[i], &(addr.sin_addr), host->h_length))
+	    {
+	      strncpyzt(cptr->sockhost, cptr->name, sizeof(cptr->sockhost));
+	      return 0;
+	    }
+	 }
+    }
+
+  if (usenameserver || cptr->confs == (Link *)NULL)
+    {
+      host = gethostbyaddr(&(addr.sin_addr), sizeof(struct in_addr),
+			   addr.sin_family);
+      if (host != NULL)
+	{
+	  char tmp[HOSTLEN];
+
+	  i = 0;
+	  for (hname = host->h_name; hname; hname = host->h_aliases[i++])
+	    {
+	      strncpyzt(tmp, hname, sizeof(tmp));
+	      add_local_domain(tmp, sizeof(tmp) - strlen(tmp));
+	      debug(DEBUG_DNS,"Got Name %s[%s] for %s",
+		    hname, tmp, inet_ntoa(addr.sin_addr));
+	      if (!check_name(cptr, tmp, flags))
+		return 0;
+	      if (!do_server && attach_confs(cptr, tmp, flags))
+		{
+		  strncpyzt(cptr->sockhost, tmp, sizeof(cptr->sockhost));
+		  return 0;
+		}
+	    }
+	}
+    }
+  /*
+   ** Copy some name (first) to 'sockhost' just in case this will
+   ** not be accepted. Then we have some valid name to put into the
+   ** error message...
+   */
+  if (cptr->sockhost[0] == '\0')
+      if (host)
+	  strncpyzt(cptr->sockhost, host->h_name, sizeof(cptr->sockhost));
+      else
+	  strncpyzt(cptr->sockhost, inet_ntoa(addr.sin_addr),
+		    sizeof(cptr->sockhost));
+  /*
+   ** Last ditch attempt: try with numeric IP-address
+   */
+  debug(DEBUG_DNS,"Last Check For Host %s", cptr->sockhost);
+  if (!check_name(cptr,cptr->sockhost,flags))
+    return 0;
+  if (!do_server)
+    attach_confs(cptr,cptr->sockhost,flags);
+
+  return (cptr->confs) ? 0 : -1;
 }
-/* quick hack so furhter #ifdef's arent needed */
-#define	gethostbyaddr	gethost
-#endif
-/*
- * Ordinary client access check. Look for conf lines which have the same
- * status as the flags passed.
- *  0 = Success
- * -1 = Access denied
- * -2 = Bad socket.
- */
-int	check_client(cptr, flags)
-aClient	*cptr;
-int	flags;
-{
-	Reg1	char	*name;
-	Reg2	aConfItem *aconf = NULL;
-	char	sockname[16], fullname[HOSTLEN+1];
-	struct	hostent *hp = NULL, *hp2 = NULL;
-	struct	sockaddr_in sk;
-	int	i = 0, j = 0;
- 
-	debug(DEBUG_DNS, "ch_cl: check access for %s[%s]",
-		cptr->name, fullname);
 
-	if (check_init(cptr, sockname, fullname, &sk))
-		return -2;
-
-	hp = gethostbyaddr(&(sk.sin_addr), sizeof(struct in_addr),
-			   sk.sin_family);
-
-	/* attach I-lines using hostname first, then check ip#'s. */
-	if (hp)
-		for (name = hp->h_name; name ; name = hp->h_aliases[i++])
-		    {
-			strncpy(fullname, name, sizeof(fullname)-1);
-			add_local_domain(fullname,HOSTLEN-strlen(fullname));
-			debug(DEBUG_DNS, "ch_cl: gethostbyaddr: %s->%s",
-				sockname, fullname);
-
-			if (!attach_confs_host(cptr, fullname, flags))
-				attach_confs(cptr, fullname, flags);
-			if (cptr->confs)
-				break;
-		    }
-
-	if (!cptr->confs)
-	    {
-		strcpy(fullname, sockname);
-		if (!attach_confs_host(cptr, fullname, flags))
-			attach_confs(cptr, fullname, flags);
-	    }
-
-	strcpy(cptr->sockhost, fullname);
-	if (!cptr->confs)
-	    {
-		debug(DEBUG_DNS,"ch_cl: access denied: %s[%s]",
-			cptr->name, fullname);
-		return -1;
-	    }
-	aconf = cptr->confs->value.aconf;
-	det_confs_butmask(cptr, 0);
-	attach_conf(cptr, aconf);
-	debug(DEBUG_DNS, "ch_cl: access ok: %s[%s]", cptr->name, fullname);
-
-	return 0;
-}
-
-#define	CFLAG	CONF_CONNECT_SERVER
-#define	NFLAG	CONF_NOCONNECT_SERVER
-/*
- * check_server
- *	check access for a server given its name (passed in cptr struct).
- *	Must check for all C/N lines which have a name which matches the
- *	name given and a host which matches. A host alias which is the
- *	same as the server name is also acceptable in the host field of a
- *	C/N line.
- *  0 = Success
- * -1 = Access denied
- * -2 = Bad socket.
- */
-int	check_server(cptr)
-aClient	*cptr;
-{
-	Reg1	char	*name;
-	char	sockname[16], fullname[HOSTLEN+1];
-	Reg2	aConfItem *c_conf = NULL, *n_conf = NULL;
-	Reg3	struct hostent *hp = NULL;
-	struct sockaddr_in sk;
-	Reg4	int i = 0;
-	Link	*links;
-
-	if (check_init(cptr, sockname, fullname, &sk))
-		return -2;
-
-	name = cptr->name;
-	strcpy(cptr->sockhost, fullname);
-	debug(DEBUG_DNS, "sv_cl: check access for %s[%s]", name, fullname);
-
-	if (IsUnknown(cptr) && !attach_confs(cptr, name, CFLAG|NFLAG))
-	    {
-		debug(DEBUG_DNS,"No C/N lines for %s", name);
-		return -1;
-	    }
-	links = cptr->confs;
-	/*
-	 * We initiated this connection so the client should have a C and N
-	 * line already attached after passing through the connec_server()
-	 * function earlier.
-	 */
-	if (IsConnecting(cptr) || IsHandshake(cptr))
-	    {
-		c_conf = find_conf(links, name, CFLAG);
-		n_conf = find_conf(links, name, NFLAG);
-		if (!c_conf || !n_conf)
-		    {
-			sendto_ops("Connecting Error: %s[%s]",
-				   name, fullname);
-			det_confs_butmask(cptr, 0);
-			return -1;
-		    }
-	    }
-	/*
-	 * if the servername is a hostname, either an alias (CNAME) or
-	 * real name, then check with it as the host. Use gethostbyname()
-	 * to check for servername as hostname.
-	 */
-	if ((!c_conf || !n_conf) && gethostbyname(name))
-	    {
-		strncpy(cptr->sockhost, name, HOSTLEN);
-		if (!c_conf)
-			c_conf = find_conf_host(links, name, CFLAG);
-		if (!n_conf)
-			n_conf = find_conf_host(links, name, NFLAG);
-	    }
-	if (!c_conf || !n_conf)
-		hp = gethostbyaddr(&(sk.sin_addr), sizeof(struct in_addr),
-				   sk.sin_family);
-	if (hp)
-		/*
-		 * if we are missing a C or N line from above, search for
-		 * it under all known hostnames we have for this ip#.
-		 */
-		for (name = hp->h_name; name ; name = hp->h_aliases[i++])
-		    {
-			strncpy(fullname, name, sizeof(fullname)-1);
-			add_local_domain(fullname,HOSTLEN-strlen(fullname));
-			debug(DEBUG_DNS, "sv_cl: gethostbyaddr: %s->%s",
-				sockname, fullname);
-			if (!c_conf)
-				c_conf = find_conf_host(links, name, CFLAG);
-			if (!n_conf)
-				n_conf = find_conf_host(links, name, NFLAG);
-			if (c_conf && n_conf)
-			    {
-				strncpy(cptr->sockhost, fullname, HOSTLEN);
-				break;
-			    }
-		    }
-	/*
-	 * Check for C and N lines with the hostname portion the ip number
-	 * of the host the server runs on. This also checks the case where
-	 * there is a server connecting from 'localhost'.
-	 */
-	if (IsUnknown(cptr))
-	    {
-		if (!c_conf)
-			c_conf = find_conf_host(links, sockname, CFLAG);
-		if (!n_conf)
-			n_conf = find_conf_host(links, sockname, NFLAG);
-	    }
-	/* detach all conf lines that got attached by attach_confs() */
-	det_confs_butmask(cptr, 0);
-
-	/* if no C or no N lines, then deny access */
-	if (!c_conf || !n_conf)
-	    {
-		strcpy(cptr->sockhost, sockname);
-		debug(DEBUG_DNS, "sv_cl: access denied: %s[%s] c %x n %x",
-			cptr->name, cptr->sockhost, c_conf, n_conf);
-		return -1;
-	    }
-	/*
-	 * attach the C and N lines to the client structure for later use.
-	 */
-	attach_conf(cptr, n_conf);
-	attach_conf(cptr, c_conf);
-
-	if (c_conf->ipnum.s_addr == -1)
-		bcopy(&(sk.sin_addr),&(c_conf->ipnum),sizeof(struct in_addr));
-	strncpy(cptr->sockhost, c_conf->host, HOSTLEN);
-
-	debug(DEBUG_DNS,"sv_cl: access ok: %s[%s]",
-		cptr->name, cptr->sockhost);
-	return 0;
-}
-#undef	CFLAG
-#undef	NFLAG
 /*
 ** completed_connection
 **	Complete non-blocking connect()-sequence. Check access and
@@ -554,24 +452,25 @@ aClient	*cptr;
 **	Return	TRUE, if successfully completed
 **		FALSE, if failed and ClientExit
 */
-static	int completed_connection(cptr)
-aClient	*cptr;
+static int completed_connection(cptr)
+aClient *cptr;
 {
-	aConfItem *aconf;
-	SetHandshake(cptr);
+  aConfItem *aconf;
+  SetHandshake(cptr);
 	
-	/* Lots of code moved to connect_server.
-	 * This routine "can't" fail anymore...   meLazy
-	 */
-	aconf = find_conf(cptr->confs, cptr->name, CONF_CONNECT_SERVER);
-	if (!BadPtr(aconf->passwd))
-		sendto_one(cptr, "PASS %s", aconf->passwd);
+  /* Lots of code moved to connect_server.
+   * This routine "can't" fail anymore...   meLazy
+   */
 
-	aconf = find_conf(cptr->confs, cptr->name, CONF_NOCONNECT_SERVER);
-	sendto_one(cptr, ":%s SERVER %s 1 :%s",
-		   me.name, my_name_for_link(me.name, aconf), me.info);
+  aconf = find_conf(cptr->confs, (char *) 0, CONF_CONNECT_SERVER);
+  if (!BadPtr(aconf->passwd))
+    sendto_one(cptr, "PASS %s", aconf->passwd);
 
-	return (cptr->flags & FLAGS_DEADSOCKET) == 0;
+  aconf = find_conf(cptr->confs, (char *) 0, CONF_NOCONNECT_SERVER);
+  sendto_one(cptr, ":%s SERVER %s 1 :%s",
+		me.name, my_name_for_link(me.name, aconf), me.info);
+
+  return (cptr->flags & FLAGS_DEADSOCKET) == 0;
 }
 
 /*
@@ -579,7 +478,7 @@ aClient	*cptr;
 **	Close the physical connection. This function must make
 **	MyConnect(cptr) == FALSE, and set cptr->from == NULL.
 */
-int	close_connection(cptr)
+close_connection(cptr)
 aClient *cptr;
     {
         Reg1 aConfItem *aconf;
@@ -596,14 +495,15 @@ aClient *cptr;
 		flush_connections(cptr->fd);
 		local[cptr->fd] = (aClient *)NULL;
 		close(cptr->fd);
+		if (cptr->fd >= highest_fd)
+			for (; highest_fd > 0; highest_fd--)
+				if (local[highest_fd])
+					break;
 		cptr->fd = -1;
 		DBufClear(&cptr->sendQ);
 	}
-	for (; highest_fd > 0; highest_fd--)
-		if (local[highest_fd])
-			break;
-
-	det_confs_butmask(cptr, 0);
+	while (cptr->confs)
+		detach_conf(cptr, cptr->confs->value.aconf);
 	cptr->from = NULL; /* ...this should catch them! >:) --msa */
 	AcceptNewConnections = TRUE; /* ...perhaps new ones now succeed? */
 
@@ -612,20 +512,19 @@ aClient *cptr;
 	 */
 	for (i = 0, j = highest_fd; i < j; i++)
 		if (!local[i]) {
-			if (fcntl(i, F_GETFL, 0) != -1)
+			int	arg;
+
+			if (fcntl(i, F_GETFL, &arg) != -1)
 				continue;
-			if (local[j]) {
-				if (dup2(j,i) == -1)
-					continue;
-				local[i] = local[j];
-				local[i]->fd = i;
-				local[j] = (aClient *)NULL;
-				close(j);
-			}
+			if (dup2(j,i) == -1)
+				continue;
+			local[i] = local[j];
+			local[i]->fd = i;
+			local[j] = (aClient *)NULL;
+			close(j);
 			for (; j > i && !local[j]; j--)
 				;
 		}
-	return 0;
     }
 
 /*
@@ -636,7 +535,7 @@ aClient *cptr;
 **	blocking version of IRC--not a problem if you are a
 **	lightly loaded node...)
 */
-static	set_non_blocking(cptr)
+static set_non_blocking(cptr)
 aClient *cptr;
     {
 	int res;
@@ -652,64 +551,53 @@ aClient *cptr;
 	return 0;
     }
 
-/*
- * Creates a client which has just connected to us on the given fd.
- * The sockhost field is initialized with the ip# of the host.
- * The client is added to the linked list of clients but isnt added to any
- * hash tables yuet since it doesnt have a name.
- */
 aClient *add_connection(fd)
-int	fd;
+int fd;
 {
-	aClient *cptr;
-	cptr = make_client((aClient *)NULL);
+  aClient *cptr;
+  cptr = make_client((aClient *)NULL);
 
-	/* Removed preliminary access check. Full check is performed in
-	 * m_server and m_user instead. Also connection time out help to
-	 * get rid of unwanted connections.
-	 */
-	if (isatty(fd)) /* If descriptor is a tty, special checking... */
-		strncpyzt(cptr->sockhost, me.sockhost, sizeof(cptr->sockhost));
-	else
-	    {
-		struct	sockaddr_in addr;
-		int	len = sizeof(struct sockaddr_in);
+  /* Removed preliminary access check. Full check is performed in
+   * m_server and m_user instead. Also connection time out help to
+   * get rid of unwanted connections.
+   */
+  
+  if (isatty(fd)) /* If descriptor is a tty, special checking... */
+    strncpyzt(cptr->sockhost, me.sockhost, sizeof(cptr->sockhost));
+  else
+    {
+      struct sockaddr_in addr;
+      int len = sizeof(struct sockaddr_in);
 
-		if (getpeername(fd, (struct sockaddr *) &addr, &len) == -1)
-		    {
-			report_error("Failed in connecting to %s :%s", cptr);
-			free(cptr);
-			return 0;
-		    }
-		/* Copy ascii address to 'sockhost' just in case. Then we
-		 * have something valid to put into error messages...
-		 */
-		strncpyzt(cptr->sockhost, inet_ntoa(addr.sin_addr),
-			  sizeof(cptr->sockhost));
-		cptr->ip.s_addr = addr.sin_addr.s_addr;
-	    }
+      if (getpeername(fd, (struct sockaddr *) &addr, &len) == -1)
+	{
+	  report_error("Failed in connecting to %s :%s", cptr);
+	  free(cptr);
+	  return 0;
+	}
+      /* Copy ascii address to 'sockhost' just in case. Then we have
+       * something valid to put into error messages...
+       */
+      strncpyzt(cptr->sockhost, inet_ntoa(addr.sin_addr),
+		sizeof(cptr->sockhost));
+    }
 
-	cptr->fd = fd;
-	if (fd > highest_fd)
-		highest_fd = fd;
-	local[fd] = cptr;
-	add_client_to_list(cptr);
-	set_non_blocking(cptr);
-	return cptr;
+  cptr->fd = fd;
+  if (fd > highest_fd)
+     highest_fd = fd;
+  local[fd] = cptr;
+  add_client_to_list(cptr);
+  set_non_blocking(cptr);
+  return cptr;
 }
 
-/*
- * Check all connections for new connections and input data that is to be
- * processed. Also check for connections with data queued and whether we can
- * write it out.
- */
-int	read_message(buffer, buflen, from, delay)
-char	*buffer;
-int	buflen;
-aClient	**from;
-long	delay; /* Don't ever use ZERO here, unless you mean to poll and then
-		* you have to have sleep/wait somewhere else in the code.--msa
-		*/
+read_message(buffer, buflen, from, delay)
+     char *buffer;
+     int buflen;
+     aClient **from;
+     long delay; /* Don't ever use ZERO here, unless you mean to poll and then
+		    you have to have sleep/wait somewhere else in the code.
+		    --msa */
 {
   static long lastaccept = 0;
   Reg1 aClient *cptr;
@@ -717,7 +605,7 @@ long	delay; /* Don't ever use ZERO here, unless you mean to poll and then
   int res, length, fd, i;
   struct timeval wait;
   fd_set read_set, write_set;
-  aConfItem *aconf = NULL;
+  aConfItem *aconf;
   long tval, delay2 = delay, now;
 
   now = time(NULL);
@@ -743,9 +631,10 @@ long	delay; /* Don't ever use ZERO here, unless you mean to poll and then
 	  }
       wait.tv_sec = MIN(delay2, delay);
       wait.tv_usec = 0;
-      nfds = select(FD_SETSIZE, &read_set, &write_set, (fd_set *) 0, &wait);
+      nfds = select(FD_SETSIZE, &read_set, &write_set,
+		    (fd_set *) 0, &wait);
       if (nfds == 0 || (nfds == -1 && errno == EINTR))
-	return -1;
+	return 0;
       else if (nfds > 0)
 	break;
       /*
@@ -804,30 +693,20 @@ long	delay; /* Don't ever use ZERO here, unless you mean to poll and then
 	continue;
       if (FD_ISSET(i, &write_set))
 	{
-	  int writeerr = 0;
 	  nfds--;
 	  if (IsConnecting(cptr) && !completed_connection(cptr))
-	    writeerr = 1;
+	    {
+	      exit_client(cptr,cptr,&me,"Failed connect?");
+	      return 0; /* Cannot continue loop after exit */
+	    }
 	  /*
 	   ** ...room for writing, empty some queue then...
 	   */
-	  if (!writeerr)
-	    send_queued(cptr);
-	  if (cptr->flags & FLAGS_DEADSOCKET || writeerr)
-	   {
-	    if (FD_ISSET(i, &read_set))
-	     {
-	      nfds--;
-	      FD_CLR(i, &read_set);
-	     }
-	    exit_client(cptr,cptr,&me,"write error");
-	    continue;
-	   }
+	  send_queued(cptr);
 	}
       if (!FD_ISSET(i, &read_set))
 	continue;
       nfds--;
-      readcalls++;
       if ((length = read(i, buffer, buflen)) > 0) {
 	*from = cptr;
 	cptr->since = cptr->lasttime = now;
@@ -859,9 +738,8 @@ long	delay; /* Don't ever use ZERO here, unless you mean to poll and then
        ** a rehash in between, the status has been changed to
        ** CONF_ILLEGAL). But only do this if it was a "good" link.
        */
-      if (cptr->confs)
-	aconf = cptr->confs->value.aconf;
-      if (aconf && aconf->status == CONF_CONNECT_SERVER)
+      if (cptr->confs && (aconf = cptr->confs->value.aconf) != NULL &&
+	  aconf->status & CONF_CONNECT_SERVER)
 	{
 	  aconf->hold = now;
 	  aconf->hold +=
@@ -872,33 +750,30 @@ long	delay; /* Don't ever use ZERO here, unless you mean to poll and then
 	}
       exit_client(cptr, cptr, &me, "Bad link?");
       continue;
+      /* return 0; /* ...cannot continue loop, blocks freed! --msa */
+      /*
+       ** Another solution would be to restart the loop from the
+       ** beginning. Then we would have to issue FD_CLR for sockets
+       ** which have been already read... --msa
+       */
     }
   return -1;
 }    
 
 
-int	connect_server(aconf)
+connect_server(aconf)
 aConfItem *aconf;
     {
-	struct	sockaddr_in server;
-	struct	hostent *hp;
-	aClient *cptr, *c2ptr;
-	int	errtmp;
+	struct sockaddr_in server;
+	struct hostent *hp;
+	aClient *cptr = make_client((aClient *)NULL);
+	int errtmp;
 
-	if (c2ptr = find_server(aconf->name, NULL))
-	    {
-		sendto_ops("Server %s already present from %s",
-			   aconf->name, c2ptr->name);
-		return -1;
-	    }
-	cptr = make_client(NULL);
-	/*
-	 * might as well get sockhost from here, the connection is attempted
-	 * with it so if it fails its useless.
-	 */
+	/* might as well get sockhost from here, the connection is attempted
+	** with it so if it fails its useless.
+	*/
+	strncpy(cptr->sockhost, aconf->host, sizeof(cptr->sockhost));
 	cptr->fd = socket(AF_INET, SOCK_STREAM, 0);
-	strncpy(cptr->sockhost, aconf->host, HOSTLEN);
-
 	if (cptr->fd < 0)
 	    {
 		report_error("opening stream socket to server %s:%s",cptr);
@@ -909,11 +784,12 @@ aConfItem *aconf;
 	
 	/* MY FIX -- jtrim@duorion.cair.du.edu  (2/10/89) */
 
-	if (isdigit(*(aconf->host)) && (aconf->ipnum.s_addr == -1))  {
+	if (isdigit(*(aconf->host)) &&
+	    (aconf->ipnum.s_addr == -1))  {
 		aconf->ipnum.s_addr = inet_addr(aconf->host);
 	} else if (aconf->ipnum.s_addr == -1) {
 		hp = gethostbyname(aconf->host);
-		if (hp == NULL)
+		if (hp == 0)
 		    {
 			close(cptr->fd);
 			free(cptr);
@@ -930,8 +806,8 @@ aConfItem *aconf;
 	set_non_blocking(cptr);
 	signal(SIGALRM, dummy);
 	alarm(4);
-	if (connect(cptr->fd, (struct sockaddr *)&server, sizeof(server)) < 0
-	    && errno != EINPROGRESS)
+	if (connect(cptr->fd, (struct sockaddr *)&server,
+		    sizeof(server)) < 0 && errno != EINPROGRESS)
 	    {
 		alarm(0);
 		errtmp = errno; /* sendto_ops may eat errno */
@@ -954,7 +830,7 @@ aConfItem *aconf;
         attach_confs_host(cptr, aconf->host,
 		       CONF_NOCONNECT_SERVER | CONF_CONNECT_SERVER);
 
-	if (!find_conf_host(cptr->confs, aconf->host, CONF_NOCONNECT_SERVER))
+	if (! find_conf(cptr->confs, (char *) 0, CONF_NOCONNECT_SERVER))
 	    {
       		sendto_ops("Host %s is not enabled for connecting (N-line)",
 			   aconf->host);
@@ -971,16 +847,12 @@ aConfItem *aconf;
 	local[cptr->fd] = cptr;
 	SetConnecting(cptr);
 
-	strncpyzt(cptr->sockhost, aconf->host, HOSTLEN);
+	strncpyzt(cptr->sockhost, aconf->host, sizeof(cptr->sockhost));
 	strncpyzt(cptr->name, aconf->name, sizeof(cptr->name));
 	add_client_to_list(cptr);
 	return 0;
     }
 
-/*
- * The following section of code performs summoning of users to irc.
- */
-#ifdef ENABLE_SUMMON
 int utmp_open()
 {
   return (open(UTMP,O_RDONLY));
@@ -1102,46 +974,48 @@ char *namebuf, *linebuf;
 		   who->name, namebuf);
 	return 0;
     }
-#endif /* ENABLE_SUMMON */
 
 get_my_name(conf_name, name, len)
 char *conf_name, *name;
 int len;
 {
   struct hostent *hp;
-
+	
   if (gethostname(name,len) < 0)
     return -1;
   name[len] = '\0';
 
   /* assume that a name containing '.' is a fully qualified domain name */
-  if (!index(name,'.'))
-    add_local_domain(name, len-strlen(name));
+  if (!index(name, '.'))
+    {
+      add_local_domain(name, len - strlen(name));
+      return 0;
+    }
+
 
   /* If hostname gives another name than conf_name, then check if there is
    * a CNAME record for conf_name pointing to hostname. If so accept conf_name
    * as our name.   meLazy
    */
-  if (!BadPtr(conf_name) && mycmp(conf_name, name))
+  if (*conf_name && mycmp(conf_name, name))
     {
-      if (hp = gethostbyname(conf_name))
-	{
-	  char tmp[HOSTLEN];
-	  char *hname;
-	  int i=0;
+    if (hp = gethostbyname(conf_name))
+      {
+        char tmp[HOSTLEN];
+        char *hname;
+        int i=0;
 
-	  for (hname = hp->h_name; hname; hname = hp->h_aliases[i++])
-	    {
-	      strncpy(tmp, hname, sizeof(tmp));
-	      add_local_domain(tmp, sizeof(tmp) - strlen(tmp));
-	      if (!mycmp(tmp, conf_name))
-		{
-		  strncpy(name, conf_name, len);
-		  break;
-		}
-	    }
-	}
+        for (hname = hp->h_name; hname; hname = hp->h_aliases[i++])
+	  {
+	    strncpy(tmp, hname, sizeof(tmp));
+	    add_local_domain(tmp, sizeof(tmp) - strlen(tmp));
+	    if (!mycmp(tmp, name))
+	      {
+	      strncpy(name, conf_name, len);
+	      break;
+	      }
+	  }
+      }
     }
-
   return (0);
 }

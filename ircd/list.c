@@ -171,18 +171,15 @@ aClient	*cptr;
 		cptr->next->prev = cptr;
 }
 
-/*
- * Look for ptr in the linked listed pointed to by link.
- */
-Link	*find_user_link(link, ptr)
-Reg1	Link	*link;
-Reg2	aClient *ptr;
+Link *find_user_link(link, ptr)
+Reg1 Link *link;
+Reg2 aClient *ptr;
 {
-	while (link && ptr)
-	   {
-		if (link->value.cptr == ptr)
-			return (link);
-		link = link->next;
-	    }
-	return (Link *)NULL;
+  while (link && ptr) {
+    if (link->value.cptr == ptr)
+      return (link);
+    link = link->next;
+  }
+  return (Link *)NULL;
 }
+
