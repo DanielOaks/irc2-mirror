@@ -956,7 +956,7 @@ int	notice;
 	Reg	char	*s;
 	aChannel *chptr;
 	char	*nick, *server, *p, *cmd, *host;
-	int	count = 0, nickcnt = 0;
+	int	count = 0;
 
 	cmd = notice ? MSG_NOTICE : MSG_PRIVATE;
 
@@ -975,22 +975,8 @@ int	notice;
 	if (MyConnect(sptr))
 		parv[1] = canonize(parv[1]);
 	for (p = NULL, nick = strtoken(&p, parv[1], ","); nick;
-	     nick = strtoken(&p, NULL, ","), nickcnt++)
+	     nick = strtoken(&p, NULL, ","))
 	    {
-
-		/*
-		** restrict destination list to MAXMSGDESTS recipients to
-		** solve SPAM problem --Yegg
-		*/
-#define		MAXMSGDESTS 5
-		if (nickcnt >= MAXMSGDESTS) {
-		    if (!notice)
-			sendto_one(sptr, err_str(
-				   ERR_TOOMANYDESTS,
-				   parv[0]), nick);
-		    continue;
-		}
-
 		/*
 		** nickname addressed?
 		*/
@@ -1126,7 +1112,7 @@ int	notice;
 		    }
 		sendto_one(sptr, err_str(ERR_NOSUCHNICK, parv[0]), nick);
 	    }
-    return nickcnt;
+    return 0;
 }
 
 /*
@@ -2497,11 +2483,12 @@ char	*parv[];
 		    !IsServer(cptr))
 			sptr->user->flags &= ~FLAGS_LOCOP;
 		if ((setflags & FLAGS_RESTRICTED) &&
-		    !(sptr->user->flags & FLAGS_RESTRICTED))
+		    !(sptr->user->flags & FLAGS_RESTRICTED) &&
+		    (what == MODE_DEL))
 		    {
 			sendto_one(sptr, err_str(ERR_RESTRICTED, parv[0]));
 			SetRestricted(sptr);
-			/* Can't return; here since it could mess counters */
+			return 1;
 		    }
 		if ((setflags & (FLAGS_OPER|FLAGS_LOCOP)) && !IsAnOper(sptr) &&
 		    MyConnect(sptr))
