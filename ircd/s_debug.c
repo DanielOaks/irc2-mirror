@@ -125,6 +125,9 @@ char	serveropts[] = {
 #ifdef	V28PlusOnly
 '8',
 #endif
+#ifdef MIRC_KLUDGE
+'$',
+#endif
 ' ',
 'V',
 #ifndef NoV28Links
@@ -409,7 +412,7 @@ int	debug;
 		totch = 0, d_totch = 0,
 		totww = 0, d_totww = 0,
 		tot = 0, d_tot = 0;
-	time_t	start;
+	time_t	start = 0;
 
 	if (debug)
 	    {
@@ -653,6 +656,6 @@ int	debug;
 	    }
 	sendto_one(cptr, ":%s %d %s :TOTAL: %d sbrk(0)-etext: %u",
 		   me.name, RPL_STATSDEBUG, nick, tot,
-		   (u_int)sbrk((size_t)0)-(u_int)sbrk0);
+		   (u_long)sbrk((size_t)0)-(u_long)sbrk0);
 	return;
 }

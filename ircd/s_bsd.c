@@ -33,9 +33,6 @@
  *   Changes in check_access
  * Added SO_REUSEADDR fix from zessel@informatik.uni-kl.de
  */
-#if defined(sun) && (defined(__SVR4) || defined(__svr4__))
-# define _DO_POLL_
-#endif
 
 #ifndef lint
 static  char sccsid[] = "@(#)s_bsd.c	1.1 1/21/95 (C) 1988 University of Oulu, \
@@ -56,7 +53,7 @@ Computing Center and Jarkko Oikarinen";
 #if defined(SVR4)
 #include <sys/filio.h>
 #endif
-#if defined(UNIXPORT) && (!defined(SVR3) || defined(sgi) || \
+#if defined(UNIXPORT) && (!defined(SVR3) || defined(SGI) || \
     defined(_SEQUENT_))
 # include <sys/un.h>
 #endif
@@ -68,6 +65,8 @@ Computing Center and Jarkko Oikarinen";
 #include <stdio.h>
 #include <signal.h>
 #include <fcntl.h>
+#include <unistd.h>		/* Linux - mkdir() */
+#include <sys/stat.h>		/* Linux - chmod() */
 #include <sys/resource.h>
 
 #ifdef _DO_POLL_
@@ -101,7 +100,7 @@ FdAry	fdas, fdaa, fdall;
 int	highest_fd = 0, readcalls = 0, udpfd = -1, resfd = -1;
 time_t	timeofday;
 static	struct	sockaddr_in	mysk;
-static  int     setup_ping __P((u_short));
+static  int     setup_ping __P((int));
 static	void	polludp();
 
 static	struct	sockaddr *connect_inet __P((aConfItem *, aClient *, int *));
@@ -151,15 +150,15 @@ int	size;
 	/* try to fix up unqualified names */
 	if (!index(hname, '.'))
 	    {
-		if (!(_res.options & RES_INIT))
+		if (!(ircd_res.options & RES_INIT))
 		    {
 			Debug((DEBUG_DNS,"res_init()"));
 			res_init();
 		    }
-		if (_res.defdname[0])
+		if (ircd_res.defdname[0])
 		    {
 			(void)strncat(hname, ".", size-1);
-			(void)strncat(hname, _res.defdname, size-2);
+			(void)strncat(hname, ircd_res.defdname, size-2);
 		    }
 	    }
 #endif
@@ -243,7 +242,7 @@ int	port;
 	(void)sscanf(name, "%d.%d.%d.%d", &ad[0], &ad[1], &ad[2], &ad[3]);
 	(void)sprintf(ipname, "%d.%d.%d.%d", ad[0], ad[1], ad[2], ad[3]);
 
-	(void)sprintf(cptr->sockhost, "%-.42s.%.u", name, (unsigned int)port);
+	(void)sprintf(cptr->sockhost, "%-.42s.%u", name, (unsigned int)port);
 	(void)strcpy(cptr->name, ME);
 	/*
 	 * At first, open a new socket
@@ -476,7 +475,7 @@ void	init_sys()
 		    {
 			(void)fprintf(stderr,"ircd fd table too big\n");
 			(void)fprintf(stderr,"Hard Limit: %d IRC max: %d\n",
-				limit.rlim_max, MAXCONNECTIONS);
+				(int) limit.rlim_max, MAXCONNECTIONS);
 			(void)fprintf(stderr,"Fix MAXCONNECTIONS\n");
 			exit(-1);
 		    }
@@ -485,7 +484,7 @@ void	init_sys()
 		if (setrlimit(RLIMIT_FD_MAX, &limit) == -1)
 		    {
 			(void)fprintf(stderr,"error setting max fd's to %d\n",
-					limit.rlim_cur);
+					(int) limit.rlim_cur);
 			exit(-1);
 		    }
 #  endif
@@ -556,7 +555,7 @@ void	init_sys()
 		    }
 #endif
 #if defined(HPUX) || defined(SVR4) || defined(DYNIXPTX) || \
-    defined(_POSIX_SOURCE) || defined(SVR4)
+    defined(_POSIX_SOURCE) || defined(SGI)
 		(void)setsid();
 #else
 		(void)setpgrp(0, (int)getpid());
@@ -1050,7 +1049,6 @@ void	close_connection(cptr)
 aClient *cptr;
 {
 	Reg	aConfItem *aconf;
-	Reg	aClient	*acptr;
 	Reg	int	i,j;
 
 	if (IsServer(cptr))
@@ -1134,13 +1132,17 @@ aClient *cptr;
 
 		/*
 		 * fd remap to keep local[i] filled at the bottom.
+		 *	don't *ever* move descriptors for 
+		 *		+ log file
+		 *		+ sockets bound to listen() ports
+		 *	--Yegg
 		 */
 		if (i >= 0 && (j = highest_fd) > i)
 		    {
 			while (!local[j])
 				j--;
 			if (j > i && local[j] &&
-			    (local[j]->status != STAT_LOG))
+			    !(IsLog(local[j]) || IsMe(local[j])))
 			    {
 				if (dup2(j,i) == -1)
 					return;
@@ -1448,6 +1450,70 @@ int	fd;
 #endif
 
 /*
+** client_packet
+**
+** Process data from receive buffer to client.
+** Extracted from read_packet() 960804/291p3/Vesa
+*/
+static	int	client_packet(cptr)
+Reg	aClient *cptr;
+{
+	Reg	int	dolen = 0;
+
+	while (DBufLength(&cptr->recvQ) && !NoNewLine(cptr) &&
+	       ((cptr->status < STAT_UNKNOWN) ||
+		(cptr->since - timeofday < 10)))
+	    {
+		/*
+		** If it has become registered as a Service or Server
+		** then skip the per-message parsing below.
+		if (IsService(cptr) || IsServer(cptr))
+		    {
+			dolen = dbuf_get(&cptr->recvQ, readbuf,
+					 sizeof(readbuf));
+			if (dolen <= 0)
+				break;
+			done = dopacket(cptr, readbuf, dolen);
+			if (done == 2 && cptr->since == cptr->lasttime)
+				cptr->since += 5;
+			if (done)
+				return done;
+			break;
+		    }
+clientsonly..			*/
+		dolen = dbuf_getmsg(&cptr->recvQ, readbuf,
+				    sizeof(readbuf));
+		/*
+		** Devious looking...whats it do ? well..if a client
+		** sends a *long* message without any CR or LF, then
+		** dbuf_getmsg fails and we pull it out using this
+		** loop which just gets the next 512 bytes and then
+		** deletes the rest of the buffer contents.
+		** -avalon
+		*/
+		while (dolen <= 0)
+		    {
+			if (dolen < 0)
+				return exit_client(cptr, cptr, &me,
+						   "dbuf_getmsg fail");
+			if (DBufLength(&cptr->recvQ) < 510)
+			    {	/* hmm? */
+				cptr->flags |= FLAGS_NONL;
+				break;
+			    }
+			dolen = dbuf_get(&cptr->recvQ, readbuf, 511);
+			if (dolen > 0 && DBufLength(&cptr->recvQ))
+				DBufClear(&cptr->recvQ);
+		    }
+
+		if (dolen > 0 &&
+		    (dopacket(cptr, readbuf, dolen) == FLUSH_BUFFER))
+			return FLUSH_BUFFER;
+	    }
+	return 1;
+}
+
+/*
 ** read_packet
 **
 ** Read a 'packet' of data from a connection and process it.  Read in 8k
@@ -1459,7 +1525,7 @@ static	int	read_packet(cptr, msg_ready)
 Reg	aClient *cptr;
 int	msg_ready;
 {
-	Reg	int	dolen = 0, length = 0, done;
+	Reg	int	length = 0, done;
 
 	if (msg_ready &&
 	    !(IsPerson(cptr) && DBufLength(&cptr->recvQ) > 6090))
@@ -1514,7 +1580,7 @@ int	msg_ready;
 		** it on the end of the receive queue and do it when its
 		** turn comes around.
 		*/
-		if (dbuf_put(&cptr->recvQ, readbuf, length) < 0)
+		if (length && dbuf_put(&cptr->recvQ, readbuf, length) < 0)
 			return exit_client(cptr, cptr, &me, "dbuf_put fail");
 
 		if (IsPerson(cptr) &&
@@ -1524,56 +1590,7 @@ int	msg_ready;
 			return exit_client(cptr, cptr, &me, "Excess Flood");
 		    }
 
-		while (DBufLength(&cptr->recvQ) && !NoNewLine(cptr) &&
-		       ((cptr->status < STAT_UNKNOWN) ||
-			(cptr->since - timeofday < 10)))
-		    {
-			/*
-			** If it has become registered as a Service or Server
-			** then skip the per-message parsing below.
-			*/
-			if (IsService(cptr) || IsServer(cptr))
-			    {
-				dolen = dbuf_get(&cptr->recvQ, readbuf,
-						 sizeof(readbuf));
-				if (dolen <= 0)
-					break;
-				done = dopacket(cptr, readbuf, dolen);
-				if (done == 2 && cptr->since == cptr->lasttime)
-					cptr->since += 5;
-				if (done)
-					return done;
-				break;
-			    }
-			dolen = dbuf_getmsg(&cptr->recvQ, readbuf,
-					    sizeof(readbuf));
-			/*
-			** Devious looking...whats it do ? well..if a client
-			** sends a *long* message without any CR or LF, then
-			** dbuf_getmsg fails and we pull it out using this
-			** loop which just gets the next 512 bytes and then
-			** deletes the rest of the buffer contents.
-			** -avalon
-			*/
-			while (dolen <= 0)
-			    {
-				if (dolen < 0)
-					return exit_client(cptr, cptr, &me,
-							   "dbuf_getmsg fail");
-				if (DBufLength(&cptr->recvQ) < 510)
-				    {
-					cptr->flags |= FLAGS_NONL;
-					break;
-				    }
-				dolen = dbuf_get(&cptr->recvQ, readbuf, 511);
-				if (dolen > 0 && DBufLength(&cptr->recvQ))
-					DBufClear(&cptr->recvQ);
-			    }
-
-			if (dolen > 0 &&
-			    (dopacket(cptr, readbuf, dolen) == FLUSH_BUFFER))
-				return FLUSH_BUFFER;
-		    }
+		return client_packet(cptr);
 	    }
 	return 1;
 }
@@ -1602,7 +1619,7 @@ FdAry	*fdp;
 	time_t	delay2 = delay;
 	u_long	usec = 0;
 	int	res, length, fd, i, fdnew;
-	int	auth = 0, highfd = -1;
+	int	auth, highfd = -1;
 
 #ifdef NPATH
          note_delay(&delay);
@@ -1616,6 +1633,7 @@ FdAry	*fdp;
 	    {
 		FD_ZERO(&read_set);
 		FD_ZERO(&write_set);
+		auth = 0;
 
 		for (i = fdp->highest; i >= 0; i--)
 		    {
@@ -1748,12 +1766,12 @@ FdAry	*fdp;
 			read_authports(cptr);
 		    }
 	    }
-	for (i = fdp->highest; i >= 0; i--)
-		if ((cptr = local[fd = fdp->fd[i]]) &&
-		    FD_ISSET(fd, &read_set) && IsListening(cptr))
+	for (i = fdp->highest; i >= 0; i--) {
+		if (!(cptr = local[fd = fdp->fd[i]]))
+			continue;
+		if (FD_ISSET(fd, &read_set) && IsListening(cptr))
 		    {
 			FD_CLR(fd, &read_set);
-			nfds--;
 			cptr->lasttime = timeofday;
 			/*
 			** There may be many reasons for error return, but
@@ -1770,7 +1788,7 @@ FdAry	*fdp;
 			    {
 				report_error("Cannot accept connections %s:%s",
 						cptr);
-				break;
+				continue;
 			    }
 			ircstp->is_ac++;
 			if (fdnew >= MAXCLIENTS)
@@ -1787,25 +1805,24 @@ FdAry	*fdp;
 			    }
 			/*
 			 * Use of add_connection (which never fails :) meLazy
+			 * Never say never. MrMurphy visited here. -Vesa
 			 */
 #ifdef	UNIXPORT
 			if (IsUnixSocket(cptr))
 				add_unixconnection(cptr, fdnew);
 			else
 #endif
-				(void)add_connection(cptr, fdnew);
+				if (!add_connection(cptr, fdnew))
+					continue;
 			nextping = timeofday;
 			istat.is_unknown++;
+			continue;
 		    }
-
-	for (i = fdp->highest; i >= 0; i--)
-	    {
-		if (!(cptr = local[fd = fdp->fd[i]]) || IsMe(cptr))
+		if (IsMe(cptr))
 			continue;
 		if (FD_ISSET(fd, &write_set))
 		    {
 			int	write_err = 0;
-			nfds--;
 			/*
 			** ...room for writing, empty some queue then...
 			*/
@@ -1818,7 +1835,6 @@ FdAry	*fdp;
 deadsocket:
 				if (FD_ISSET(fd, &read_set))
 				    {
-					nfds--;
 					FD_CLR(fd, &read_set);
 				    }
 				cptr->exitc = EXITC_ERROR;
@@ -1828,10 +1844,15 @@ deadsocket:
 			    }
 		    }
 		length = 1;	/* for fall through case */
-		if ((!NoNewLine(cptr) || FD_ISSET(fd, &read_set)) &&
-		    !(DoingAuth(cptr) && timeofday - cptr->firsttime < 5))
-			length = read_packet(cptr, &read_set);
-		nfds--;
+		if (!NoNewLine(cptr) || FD_ISSET(fd, &read_set)) {
+			if (!(DoingAuth(cptr) &&
+			      timeofday - cptr->firsttime < 5))
+				length = read_packet(cptr,
+						     FD_ISSET(fd, &read_set));
+		}
+/*		else if (IsClient(cptr) && DBufLength(&cptr->recvQ))
+			length = client_packet(cptr);
+*/
 		readcalls++;
 		if (length == FLUSH_BUFFER)
 			continue;
@@ -1894,7 +1915,7 @@ deadsocket:
 		(void)exit_client(cptr, cptr, &me, length >= 0 ?
 				  "EOF From client" :
 				  strerror(get_sockerr(cptr)));
-	    }
+	} /* for(i) */
 	return 0;
 }
 
@@ -1914,11 +1935,14 @@ FdAry	*fdp;
  *  eliminate the direct FD_<blah> macros as they are select() specific
  *  and replace them with a higher level abstraction that also works for
  *  poll()...
+ *  added POLLERR and POLLHUP into revents checking on input to catch
+ *  errors and hangups on streams..                            --DLR
  */
-#define POLLREADFLAGS (POLLIN|POLLRDNORM)
+#define POLLSETREADFLAGS (POLLIN|POLLRDNORM)
+#define POLLREADFLAGS (POLLSETREADFLAGS|POLLHUP|POLLERR)
 #define POLLWRITEFLAGS (POLLOUT|POLLWRNORM)
 #define SET_READ_EVENT( thisfd ){  CHECK_PFD( thisfd );\
-				   pfd->events |= POLLREADFLAGS;}
+				   pfd->events |= POLLSETREADFLAGS;}
 #define SET_WRITE_EVENT( thisfd ){ CHECK_PFD( thisfd );\
 				   pfd->events |= POLLWRITEFLAGS;}
 #define CHECK_PFD( thisfd ) 			\
@@ -1936,16 +1960,16 @@ FdAry	*fdp;
 	struct	timeval	nowt;
 	u_long	us;
 #endif
-	pollfd_t   poll_fdarray[MAXCONNECTIONS];
-	pollfd_t * pfd     = poll_fdarray;
-	pollfd_t * res_pfd = NULL;
-	pollfd_t * udp_pfd = NULL;
+	struct pollfd   poll_fdarray[MAXCONNECTIONS];
+	struct pollfd * pfd     = poll_fdarray;
+	struct pollfd * res_pfd = NULL;
+	struct pollfd * udp_pfd = NULL;
 	aClient	 * authclnts[MAXCONNECTIONS];	/* mapping of auth fds to client ptrs */
 	int	   nbr_pfds = 0;
 	time_t	   delay2 = delay;
 	u_long	   usec = 0;
 	int	   res, length, fd, i, fdnew;
-	int	   auth = 0;
+	int	   auth;
 
 #ifdef NPATH
          note_delay(&delay);
@@ -2059,13 +2083,11 @@ FdAry	*fdp;
 	if (res_pfd && (res_pfd->revents & POLLREADFLAGS) )
 	    {
 			do_dns_async();
-			nfds--;
 			res_pfd->revents &= ~POLLREADFLAGS;
 	    }
 	if (udp_pfd && (udp_pfd->revents & POLLREADFLAGS) )
 	    {
 			polludp();
-			nfds--;
 			udp_pfd->revents &= ~POLLREADFLAGS;
 	    }
 
@@ -2073,26 +2095,17 @@ FdAry	*fdp;
 	 *  loop through all the polled fds testing for whether any 
 	 *  has an I/O ready 
 	 */
-	for ( pfd = poll_fdarray, i = 0; 
-		(nfds > 0) && (i < nbr_pfds); 
-		i++, pfd++ ) {
-
-		/* most tests (idle fds) should keep going here */
-		if ( pfd->revents == 0 )
-			continue;
-
-		/* found something that completed */
-		nfds--;	
+	for (pfd = poll_fdarray, i = 0; i < nbr_pfds; i++, pfd++ ) {
 		fd = pfd->fd;
-
 		/* check for the auth completions - previously, this was it's
 	  	   own loop through the fds */
-		if (( auth > 0 ) && ( cptr = authclnts[fd]) && ( cptr->authfd == fd )) {
+		if ((auth > 0) && (cptr = authclnts[fd]) &&
+		    (cptr->authfd == fd)) {
 			/* auth I/O ready */
 			auth--;
 			if (pfd->revents & POLLWRITEFLAGS) 
 				send_authports(cptr);
-			else if (pfd->revents & POLLREADFLAGS) 
+			if (pfd->revents & POLLREADFLAGS) 
 				read_authports(cptr);
 			continue;
 	    	}
@@ -2102,7 +2115,7 @@ FdAry	*fdp;
 		 *  of this code embedded this test within the subsequent
 		 *  'if' statements - put it here for reusability
 		 */
-		if ( !(cptr = local[fd])) 
+		if (!(cptr = local[fd])) 
 			continue;
 
 		/*
@@ -2144,22 +2157,24 @@ FdAry	*fdp;
 			    }
 			/*
 			 * Use of add_connection (which never fails :) meLazy
+			 * Never say never. MrMurphy visited here. -Vesa
 			 */
 #ifdef	UNIXPORT
 			if (IsUnixSocket(cptr))
 				add_unixconnection(cptr, fdnew);
 			else
 #endif
-				(void)add_connection(cptr, fdnew);
+				if (!add_connection(cptr, fdnew))
+					continue;
 			nextping = timeofday;
 			istat.is_unknown++;
 			continue;
-		    }
+		    } /* if(READ&&Listening) */
 
 		/*
 	 	 *  was the next loop - check for actual work to be done
 		 */
-		if (IsMe( cptr ))
+		if (IsMe(cptr))
 			continue;
 		if (pfd->revents & POLLWRITEFLAGS )
 		    {
@@ -2181,9 +2196,15 @@ deadsocket:
 			    }
 		    }
 		length = 1;	/* for fall through case */
-		if ((!NoNewLine(cptr) || pfd->revents & POLLREADFLAGS) &&
-		    !(DoingAuth(cptr) && timeofday - cptr->firsttime < 5))
-			length = read_packet(cptr, ((pfd->revents & POLLREADFLAGS )!= 0));
+		if (!NoNewLine(cptr) || pfd->revents & POLLREADFLAGS) {
+			if (!(DoingAuth(cptr) &&
+			      timeofday - cptr->firsttime < 5))
+				length = read_packet(cptr,
+						pfd->revents & POLLREADFLAGS);
+		}
+/*		else if (IsClient(cptr) && DBufLength(&cptr->recvQ))
+			length = client_packet(cptr);
+*/
 		readcalls++;
 		if (length == FLUSH_BUFFER)
 			continue;
@@ -2246,7 +2267,7 @@ deadsocket:
 		(void)exit_client(cptr, cptr, &me, length >= 0 ?
 				  "EOF From client" :
 				  strerror(get_sockerr(cptr)));
-	    }
+	} /* for(i,pfd) */
 	return 0;
 }
 #endif /* _DO_POLL */
@@ -2479,7 +2500,7 @@ int	*lenp;
 	server.sin_port = htons((aconf->port > 0) ? aconf->port : portnum);
 	/*
 	 * Look for a duplicate IP#,port pair among already open connections
-	 * (This caters for unestablished connetsions).
+	 * (This caters for unestablished connections).
 	 */
 	for (i = highest_fd; i >= 0; i--)
 		if ((acptr = local[i]) &&
@@ -2753,7 +2774,7 @@ int	len;
 ** setup a UDP socket and listen for incoming packets
 */
 static	int	setup_ping(port)
-u_short	port;
+int	port;
 {
 	struct	sockaddr_in	from;
 	int	on = 1;
@@ -2762,7 +2783,7 @@ u_short	port;
 		return udpfd;
 	bzero((char *)&from, sizeof(from));
 	from.sin_addr.s_addr = htonl(INADDR_ANY);
-	from.sin_port = port;
+	from.sin_port = (u_short) port;
 	from.sin_family = AF_INET;
 
 	if ((udpfd = socket(AF_INET, SOCK_DGRAM, 0)) == -1)
@@ -2850,11 +2871,10 @@ char	*buf;
 int	len;
 {
 	Ping	pi;
-	char	*s;
 	aConfItem	*aconf;
 	struct	timeval	tv;
 	double	d;
-	aCPing	*cp;
+	aCPing	*cp = NULL;
 	u_long	rtt;
 
 	(void)gettimeofday(&tv, NULL);

@@ -17,6 +17,8 @@
 #*   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 #*/
 
+SHELL=/bin/sh
+
 rev=`support/rev.sh`
 
 all install config configure:
@@ -27,7 +29,7 @@ all install config configure:
 		echo "Configuring ${rev}"; \
 		mkdir -p ${rev}; \
 		cd ${rev}; \
-		sh ../support/configure ${CONFIGARGS}; \
+		${SHELL} ../support/configure ${CONFIGARGS}; \
 		if [ ! -f config.h ]; then \
 			/bin/cp ../include/config.h.dist config.h; \
 		fi; \

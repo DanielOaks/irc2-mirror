@@ -34,7 +34,7 @@
 static  char sccsid[] = "@(#)res.c	1.1 1/21/95 (C) 1992 Darren Reed";
 #endif
 
-#define	DEBUG	/* because there is a lot of debug code in here :-) */
+#undef	DEBUG	/* because there is a lot of debug code in here :-) */
 
 extern	int	errno, h_errno;
 extern	int	highest_fd;
@@ -64,6 +64,7 @@ static	ResRQ	*find_id __P((int));
 static	int	hash_number __P((unsigned char *));
 static	void	update_list __P((ResRQ *, aCache *));
 static	int	hash_name __P((char *));
+static	int	bad_hostname __P((char *, int));
 
 static	struct cacheinfo {
 	int	ca_adds;
@@ -91,7 +92,7 @@ static	struct	resinfo {
 int	init_resolver(op)
 int	op;
 {
-	int	ret = 0, on = 0;
+	int	ret = 0;
 
 #ifdef	LRAND48
 	srand48(time(NULL));
@@ -104,10 +105,10 @@ int	op;
 	if (op & RES_CALLINIT)
 	    {
 		ret = res_init();
-		if (!_res.nscount)
+		if (!ircd_res.nscount)
 		    {
-			_res.nscount = 1;
-			_res.nsaddr_list[0].sin_addr.s_addr =
+			ircd_res.nscount = 1;
+			ircd_res.nsaddr_list[0].sin_addr.s_addr =
 				inet_addr("127.0.0.1");
 		    }
 	    }
@@ -121,7 +122,7 @@ int	op;
 	    }
 #ifdef DEBUG
 	if (op & RES_INITDEBG);
-		_res.options |= RES_DEBUG;
+		ircd_res.options |= RES_DEBUG;
 #endif
 	if (op & RES_INITCACH)
 	    {
@@ -290,7 +291,7 @@ char	*cp;
 }
 
 /*
- * sends msg to all nameservers found in the "_res" structure.
+ * sends msg to all nameservers found in the "ircd_res" structure.
  * This should reflect /etc/resolv.conf. We will get responses
  * which arent needed but is easier than checking to see if nameserver
  * isnt present. Returns number of messages successfully sent to 
@@ -306,16 +307,16 @@ int	len, rcount;
 	if (!msg)
 		return -1;
 
-	max = MIN(_res.nscount, rcount);
-	if (_res.options & RES_PRIMARY)
+	max = MIN(ircd_res.nscount, rcount);
+	if (ircd_res.options & RES_PRIMARY)
 		max = 1;
 	if (!max)
 		max = 1;
 
 	for (i = 0; i < max; i++)
 	    {
-		_res.nsaddr_list[i].sin_family = AF_INET;
-		if (sendto(resfd, msg, len, 0, (SAP)&(_res.nsaddr_list[i]),
+		ircd_res.nsaddr_list[i].sin_family = AF_INET;
+		if (sendto(resfd, msg, len, 0, (SAP)&(ircd_res.nsaddr_list[i]),
 			   sizeof(struct sockaddr)) == len)
 		    {
 			reinfo.re_sent++;
@@ -385,11 +386,11 @@ Reg	ResRQ	*rptr;
 	(void)strncpy(hname, name, sizeof(hname) - 1);
 	len = strlen(hname);
 
-	if (rptr && !index(hname, '.') && _res.options & RES_DEFNAMES)
+	if (rptr && !index(hname, '.') && ircd_res.options & RES_DEFNAMES)
 	    {
 		(void)strncat(hname, dot, sizeof(hname) - len - 1);
 		len++;
-		(void)strncat(hname, _res.defdname, sizeof(hname) - len -1);
+		(void)strncat(hname, ircd_res.defdname, sizeof(hname) - len -1);
 	    }
 
 	/*
@@ -555,13 +556,13 @@ HEADER	*hptr;
 
 		len = strlen(hostbuf);
 		/* name server never returns with trailing '.' */
-		if (!index(hostbuf,'.') && (_res.options & RES_DEFNAMES))
+		if (!index(hostbuf,'.') && (ircd_res.options & RES_DEFNAMES))
 		    {
 			(void)strcat(hostbuf, dot);
 			len++;
-			(void)strncat(hostbuf, _res.defdname,
+			(void)strncat(hostbuf, ircd_res.defdname,
 				sizeof(hostbuf) - 1 - len);
-			len = MIN(len + strlen(_res.defdname),
+			len = MIN(len + strlen(ircd_res.defdname),
 				  sizeof(hostbuf) - 1);
 		    }
 
@@ -597,6 +598,8 @@ HEADER	*hptr;
 			len = strlen(hostbuf);
 			Debug((DEBUG_INFO, "got host %s (%d vs %d)",
 				hostbuf, len, strlen(hostbuf)));
+			if (bad_hostname(hostbuf, len))
+				return -1;
 			/*
 			 * copy the returned hostname into the host name
 			 * or alias field if there is a known hostname
@@ -620,6 +623,8 @@ HEADER	*hptr;
 		case T_CNAME :
 			cp += dlen;
 			Debug((DEBUG_INFO,"got cname %s",hostbuf));
+			if (bad_hostname(hostbuf, len))
+				return -1;
 			if (alias >= &(hp->h_aliases[MAXALIASES-1]))
 				break;
 			*alias = (char *)MyMalloc(len + 1);
@@ -647,7 +652,7 @@ char	*lp;
 	static	char	buf[sizeof(HEADER) + MAXPACKET];
 	Reg	HEADER	*hptr;
 	Reg	ResRQ	*rptr = NULL;
-	aCache	*cp;
+	aCache	*cp = NULL;
 	struct	sockaddr_in	sin;
 	int	rc, a, len = sizeof(sin), max;
 
@@ -680,14 +685,14 @@ char	*lp;
 	/*
 	 * check against possibly fake replies
 	 */
-	max = MIN(_res.nscount, rptr->sends);
+	max = MIN(ircd_res.nscount, rptr->sends);
 	if (!max)
 		max = 1;
 
 	for (a = 0; a < max; a++)
-		if (!_res.nsaddr_list[a].sin_addr.s_addr ||
+		if (!ircd_res.nsaddr_list[a].sin_addr.s_addr ||
 		    !bcmp((char *)&sin.sin_addr,
-			  (char *)&_res.nsaddr_list[a].sin_addr,
+			  (char *)&ircd_res.nsaddr_list[a].sin_addr,
 			  sizeof(struct in_addr)))
 			break;
 	if (a == max)
@@ -731,12 +736,21 @@ char	*lp;
 		goto getres_err;
 	    }
 	a = proc_answer(rptr, hptr, buf, buf+rc);
+	if (a == -1) {
+		sendto_flag(SCH_ERROR, "Bad hostname returned from %s",
+			inet_ntoa(sin.sin_addr));
+		Debug((DEBUG_DNS, "Bad hostname returned from %s",
+			inet_ntoa(sin.sin_addr)));
+	}
 #ifdef DEBUG
 	Debug((DEBUG_INFO,"get_res:Proc answer = %d",a));
 #endif
 	if (a && rptr->type == T_PTR)
 	    {
 		struct	hostent	*hp2 = NULL;
+
+		if (BadPtr(rptr->he.h_name))	/* Kludge!	960907/Vesa */
+			goto getres_err;
 
 		Debug((DEBUG_DNS, "relookup %s <-> %s",
 			rptr->he.h_name, inetntoa((char *)&rptr->he.h_addr)));
@@ -796,9 +810,9 @@ getres_err:
 			 * If we havent tried with the default domain and its
 			 * set, then give it a try next.
 			 */
-			if (_res.options & RES_DEFNAMES && ++rptr->srch == 0)
+			if (ircd_res.options & RES_DEFNAMES && ++rptr->srch == 0)
 			    {
-				rptr->retries = _res.retry;
+				rptr->retries = ircd_res.retry;
 				rptr->sends = 0;
 				rptr->resend = 1;
 				resend_query(rptr);
@@ -1418,4 +1432,17 @@ char	*nick;
 	sendto_one(sptr, ":%s %d %s :Structs %d IP storage %d Name storage %d",
 		   me.name, RPL_STATSDEBUG, nick, sm, im, nm);
 	return ts + sm + im + nm;
+}
+
+
+static	int	bad_hostname(name, len)
+char *name;
+int len;
+{
+	char	*s, c;
+
+	for (s = name; (c = *s) && len; s++, len--)
+		if (isspace(c) || (c == 0x7) || (c == ':'))
+			return -1;
+	return 0;
 }

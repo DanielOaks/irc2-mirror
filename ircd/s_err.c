@@ -17,6 +17,7 @@
  *   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+#include "sys.h"
 #include "struct.h"
 #include "numeric.h"
 #include "common.h"
@@ -39,7 +40,7 @@ static	Numeric	local_replies[] = {
 /* 001 */	RPL_WELCOME, ":Welcome to the Internet Relay Network %s",
 /* 002 */	RPL_YOURHOST, ":Your host is %s, running version %s",
 /* 003 */	RPL_CREATED, ":This server was created %s",
-/* 004 */	RPL_MYINFO, "%s %s oiw biklmnopstva",
+/* 004 */	RPL_MYINFO, "%s %s oirw abiklmnopqstv",
 		0, (char *)NULL
 };
 
@@ -54,7 +55,8 @@ static	Numeric	numeric_errors[] = {
 		"%s :Duplicate recipients. No message delivered",
 /* 408 */	ERR_NOSUCHSERVICE, "%s :No such service",
 /* 409 */	ERR_NOORIGIN, ":No origin specified",
-		0, (char *)NULL,
+/* 410 */	ERR_TOOMANYDESTS,
+		"%s :Too many recipients. No message delivered",
 /* 411 */	ERR_NORECIPIENT, ":No recipient given (%s)",
 /* 412 */	ERR_NOTEXTTOSEND, ":No text to send",
 /* 413 */	ERR_NOTOPLEVEL, "%s :No toplevel domain specified",
@@ -71,7 +73,7 @@ static	Numeric	numeric_errors[] = {
 		0, (char *)NULL, 0, (char *)NULL, 0, (char *)NULL,
 		0, (char *)NULL, 0, (char *)NULL, 0, (char *)NULL,
 /* 431 */	ERR_NONICKNAMEGIVEN, ":No nickname given",
-/* 432 */	ERR_ERRONEUSNICKNAME, "%s :Erroneus Nickname",
+/* 432 */	ERR_ERRONEUSNICKNAME, "%s :Erroneous Nickname",
 /* 433 */	ERR_NICKNAMEINUSE, "%s :Nickname is already in use.",
 /* 434 */	ERR_SERVICENAMEINUSE, (char *)NULL,
 /* 435 */	ERR_SERVICECONFUSED, (char *)NULL,
@@ -201,7 +203,7 @@ static	Numeric	numeric_replies[] = {
 /* 385 */	RPL_NOTOPERANYMORE, (char *)NULL,
 		0, (char *)NULL, 0, (char *)NULL, 0, (char *)NULL,
 		0, (char *)NULL, 0, (char *)NULL,
-/* 391 */	RPL_TIME, ":%s",
+/* 391 */	RPL_TIME, "%s :%s",
 #ifdef	ENABLE_USERS
 /* 392 */	RPL_USERSSTART, ":UserID   Terminal  Host",
 /* 393 */	RPL_USERS, ":%-8s %-9s %-8s",
@@ -276,6 +278,9 @@ char	*to;
 	Reg	Numeric	*nptr;
 	Reg	int	num = numeric;
 
+	if (BadPtr(to))		/* for unregistered clients */
+		to = "*";
+
 	num -= numeric_errors[0].num_val;
 	if (num < 0 || num > ERR_USERSDONTMATCH)
 		SPRINTF(numbuff,
@@ -308,6 +313,9 @@ char	*to;
 
 	if (num > 4)
 		num -= (num > 300) ? 300 : 100;
+
+	if (BadPtr(to))		/* for unregistered clients */
+		to = "*";
 
 	if (num < 0 || num > 200)
 		SPRINTF(numbuff,

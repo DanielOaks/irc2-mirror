@@ -34,10 +34,11 @@ Computing Center and Jarkko Oikarinen";
 #include <stdio.h>
 #include <fcntl.h>
 
-static	char	sendbuf[2048], psendbuf[2048];
+static	char	sendbuf[2048];
 static	int	send_message __P((aClient *, char *, int));
 
 #ifndef CLIENT_COMPILE
+static	char	psendbuf[2048];
 static	int	sentalong[MAXCONNECTIONS];
 #endif
 
@@ -134,7 +135,7 @@ int	len;
 	else if (IsMe(to))
 	    {
 		sendto_flag(SCH_ERROR, "Trying to send to myself! [%s]", msg);
-		return;
+		return 0;
 	    }
 #endif
 	if (IsDead(to))
@@ -159,13 +160,17 @@ int	len;
 			   	get_client_name(to, FALSE),
 				DBufLength(&to->sendQ), get_sendq(to));
 		if (!CBurst(to))
+		    {
+			to->exitc = EXITC_SENDQ;
 			return dead_link(to, "Max Sendq exceeded");
+		    }
 #  else
 		if (IsServer(to))
 			sendto_flag(SCH_ERROR,
 				"Max SendQ limit exceeded for %s: %d > %d",
 			   	get_client_name(to, FALSE),
 				DBufLength(&to->sendQ), get_sendq(to));
+		to->exitc = EXITC_SENDQ;
 		return dead_link(to, "Max Sendq exceeded");
 #  endif
 	    }
@@ -185,8 +190,11 @@ tryagain:
 				goto tryagain;
 			    }
 			else
+			    {
+				to->exitc = EXITC_MBUF;
 				return dead_link(to,
 					"Buffer allocation error for %s");
+			    }
 	/*
 	** Update statistics. The following is slightly incorrect
 	** because it counts messages even if queued, but bytes
@@ -226,7 +234,7 @@ tryagain:
 	else if (IsMe(to))
 	    {
 		sendto_flag(SCH_ERROR, "Trying to send to myself! [%s]", msg);
-		return;
+		return 0;
 	    }
 #endif
 	if (IsDead(to))
@@ -268,8 +276,12 @@ tryagain:
 		    }
 		else
 # endif
-		    if (dbuf_put(&to->sendQ,msg+rlen,len-rlen) < 0)
-			return dead_link(to,"Buffer allocation error for %s");
+			if (dbuf_put(&to->sendQ,msg+rlen,len-rlen) < 0)
+			    {
+				to->exitc = EXITC_MBUF;
+				return dead_link(to,
+					"Buffer allocation error for %s");
+			    }
 	    }
 	/*
 	** Update statistics. The following is slightly incorrect
@@ -354,7 +366,7 @@ char	*pattern, *p1, *p2, *p3, *p4, *p5, *p6, *p7, *p8, *p9, *p10, *p11;
 	return len;
 }
 
-
+#ifndef CLIENT_COMPILE
 static	int	sendpreprep(to, from, pattern,
 			    p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11)
 aClient	*to, *from;
@@ -416,7 +428,7 @@ char	*pattern, *p1, *p2, *p3, *p4, *p5, *p6, *p7, *p8, *p9, *p10, *p11;
 	psendbuf[len] = '\0';
 	return len;
 }
-
+#endif /* CLIENT_COMPILE */
 
 /*
 ** send message to single client
@@ -473,9 +485,7 @@ char	*pattern, *p1, *p2, *p3, *p4, *p5, *p6, *p7, *p8;
 {
 	Reg	Link	*lp;
 	Reg	aClient *acptr, *lfrm = from;
-	Reg	int	i;
 	int	len1, len2 = 0;
-	char	*op = p1;
 
 	if (IsAnonymous(chptr) && IsClient(from))
 	    {
@@ -616,7 +626,6 @@ char	*pattern, *p1, *p2, *p3, *p4, *p5, *p6, *p7, *p8;
 {
 	Reg	Link	*lp;
 	Reg	aClient	*acptr, *lfrm = from;
-	char	*op = p1;
 	int	len = 0;
 
 	if (MyClient(from))
@@ -644,7 +653,6 @@ char	*pattern, *p1, *p2, *p3, *p4, *p5, *p6, *p7, *p8;
 
 	return;
 }
-#endif /* CLIENT_COMPILE */
 
 /*
 ** send a msg to all ppl on servers/hosts that match a specified mask
@@ -668,7 +676,6 @@ int	what;
 	}
 }
 
-#ifndef CLIENT_COMPILE
 /*
  * sendto_match_servs
  *
@@ -689,7 +696,7 @@ char	*format, *p1, *p2, *p3, *p4, *p5, *p6, *p7, *p8, *p9;
 	    {
 		if (*chptr->chname == '&')
 			return;
-		if (mask = (char *)rindex(chptr->chname, ':'))
+		if ((mask = (char *)rindex(chptr->chname, ':')))
 			mask++;
 	    }
 	else
@@ -702,6 +709,11 @@ char	*format, *p1, *p2, *p3, *p4, *p5, *p6, *p7, *p8, *p9;
 			continue;
 		if (!BadPtr(mask) && matches(mask, cptr->name))
 			continue;
+#ifndef NoV28Links
+		if (chptr && *chptr->chname == '+' &&
+		    cptr->serv->version == SV_OLD)
+			continue;
+#endif
 		if (!len)
 			len = sendprep(format, p1, p2, p3, p4, p5, p6, p7,
 				       p8, p9);
@@ -723,7 +735,7 @@ int	what;
 char	*mask, *pattern, *p1, *p2, *p3, *p4, *p5, *p6, *p7, *p8;
 {
 	Reg	int	i;
-	Reg	aClient *cptr, *acptr;
+	Reg	aClient *cptr, *acptr = NULL;
 	Reg	anUser	*user;
   
 	for (i = 0; i <= highest_fd; i++)
@@ -741,6 +753,8 @@ char	*mask, *pattern, *p1, *p2, *p3, *p4, *p5, *p6, *p7, *p8;
 					break;
 			if (!acptr)
 				continue;
+			sendto_prefix_one(cptr, from, pattern,
+					  p1, p2, p3, p4, p5, p6, p7, p8);
 		    }
 		/* my client, does he match ? */
 		else if (IsRegisteredUser(cptr) && match_it(cptr, mask, what))
@@ -804,7 +818,7 @@ char	*pattern, *p1, *p2, *p3, *p4, *p5, *p6, *p7, *p8;
 	bzero((char *)&sentalong[0], sizeof(int) * MAXCONNECTIONS);
 	for (cptr = client; cptr; cptr = cptr->next)
 	    {
-		if (IsPerson(cptr) && !SendWallops(cptr) || IsMe(cptr))
+		if ((IsPerson(cptr) && !SendWallops(cptr)) || IsMe(cptr))
 			continue;
 		if (MyClient(cptr) && !(IsServer(from) || IsMe(from)))
 			continue;
@@ -870,8 +884,6 @@ void	sendto_flag(chan, pattern, p1, p2, p3, p4, p5, p6)
 u_int	chan;
 char	*pattern, *p1, *p2, *p3, *p4, *p5, *p6;
 {
-	Reg	aClient	*cptr;
-	Reg	int	i;
 	Reg	aChannel *chptr = NULL;
 	SChan	*shptr;
 	char	nbuf[256];
@@ -891,7 +903,7 @@ char	*pattern, *p1, *p2, *p3, *p4, *p5, *p6;
 }
 
 void	sendto_flog(ftime, msg, duration, username, hostname, ident, exitc)
-char	*ftime, *msg, *username, *hostname, *ident, exitc;
+char	*ftime, *msg, *username, *hostname, *ident, *exitc;
 time_t	duration;
 {
 	char	linebuf[160];
@@ -928,13 +940,14 @@ time_t	duration;
 		if (duration)
 			(void)sprintf(linebuf,
 				     "%s (%3d:%02d:%02d): %s@%s [%s] %c\n",
-				     ftime, duration / 3600,
-				     (duration % 3600)/60, duration % 60,
-				     username, hostname, ident, exitc);
+				     ftime, (int) (duration / 3600),
+				     (int) ((duration % 3600) / 60),
+				     (int) (duration % 60),
+				     username, hostname, ident, *exitc);
 		else
 			(void)sprintf(linebuf, "%s (%s): %s@%s [%s] %c\n",
 				      ftime, msg, username, hostname, ident,
-				      exitc);
+				      *exitc);
 		(void)alarm(3);
 		(void)write(logfile, linebuf, strlen(linebuf));
 		(void)alarm(0);

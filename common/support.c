@@ -25,6 +25,7 @@ static  char sccsid[] = "%W% %G% 1990, 1991 Armin Gruner;\
 #include "struct.h"
 #include "common.h"
 #include "sys.h"
+#include "h.h"
 #include "patchlevel.h"
 
 extern	int errno; /* ...seems that errno.h doesn't define this everywhere */
@@ -51,7 +52,7 @@ char	*s;
 **			of separators
 **			argv 9/90
 **
-**	$Id: support.c,v 6.1 1991/07/04 21:04:01 gruner stable gruner $
+**	$Id: support.c,v 1.1.1.1 1997/04/14 13:25:02 kalt Exp $
 */
 
 char *strtoken(save, str, fs)
@@ -105,7 +106,7 @@ char *str, *fs;
 **	strerror - return an appropriate system error string to a given errno
 **
 **		   argv 11/90
-**	$Id: support.c,v 6.1 1991/07/04 21:04:01 gruner stable gruner $
+**	$Id: support.c,v 1.1.1.1 1997/04/14 13:25:02 kalt Exp $
 */
 
 char *strerror(err_no)
@@ -139,7 +140,7 @@ int err_no;
 **			internet number (some ULTRIX don't have this)
 **			argv 11/90).
 **	inet_ntoa --	its broken on some Ultrix/Dynix too. -avalon
-**	$Id: support.c,v 6.1 1991/07/04 21:04:01 gruner stable gruner $
+**	$Id: support.c,v 1.1.1.1 1997/04/14 13:25:02 kalt Exp $
 */
 
 char	*inetntoa(in)
@@ -162,7 +163,7 @@ char	*in;
 /*
 **	inet_netof --	return the net portion of an internet number
 **			argv 11/90
-**	$Id: support.c,v 6.1 1991/07/04 21:04:01 gruner stable gruner $
+**	$Id: support.c,v 1.1.1.1 1997/04/14 13:25:02 kalt Exp $
 **
 */
 
@@ -510,7 +511,7 @@ char	*i0, *i1, *i2, *i3, *i4, *i5, *i6, *i7, *i8, *i9, *i10;
 	char	*inp[11];
 	Reg	char	*rp, *fp, *wp, **pp = inp;
 	Reg	char	f;
-	Reg	int	myi;
+	Reg	long	myi;
 	int	i;
 
 	inp[0] = i0;
@@ -550,7 +551,7 @@ char	*i0, *i1, *i2, *i3, *i4, *i5, *i6, *i7, *i8, *i9, *i10;
 			 */
 			case 'd':
 			case 'u':
-				myi = (int)*pp++;
+				myi = (long)*pp++;
 				if ((myi < 100) || (myi > 999))
 				    {
 					(void)sprintf(outp, formp, i0, i1, i2,
@@ -566,7 +567,7 @@ char	*i0, *i1, *i2, *i3, *i4, *i5, *i6, *i7, *i8, *i9, *i10;
 				*wp++ = (char)(myi + (int) '0');
 				break;
 			case 'c':
-				*wp++ = (char)(int)*pp++;
+				*wp++ = (char)(long)*pp++;
 				break;
 			case '%':
 				*wp++ = '%';
@@ -585,16 +586,16 @@ char	*i0, *i1, *i2, *i3, *i4, *i5, *i6, *i7, *i8, *i9, *i10;
  */
 char *make_version()
 {
-        int ve, re, pl, be, al;
+	int ve, re, pl, be, al;
 	char ver[15];
 
-        sscanf(PATCHLEVEL, "%2d%2d%2d%2d%2d", &ve, &re, &pl, &be, &al);
-        sprintf(ver, "%d.%d", ve, re);	/* version & revision */
-        if (pl)
-                sprintf(ver + strlen(ver), ".%d", pl);	/* patchlevel */
-        if (be)
-                sprintf(ver + strlen(ver), "b%d", be);	/* beta */
-        if (al)
-                sprintf(ver + strlen(ver), "a%d", al);	/* alpha */
+	sscanf(PATCHLEVEL, "%2d%2d%2d%2d%2d", &ve, &re, &pl, &be, &al);
+	sprintf(ver, "%d.%d", ve, re);	/* version & revision */
+	if (pl)	/* patchlevel */
+		sprintf(ver + strlen(ver), ".%d", be ? pl+1 : pl);
+	if (be)	/* beta, note how visual patchlevel is raised above */
+		sprintf(ver + strlen(ver), "b%d", be);
+	if (al)	/* patch */
+		sprintf(ver + strlen(ver), "p%d", al);
 	return mystrdup(ver);
 }

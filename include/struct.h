@@ -23,7 +23,6 @@
 
 #include "config.h"
 #include "common.h"
-#include "service.h"
 
 #include <stdio.h>
 #include <sys/types.h>
@@ -36,7 +35,7 @@
 #endif
 #include <netdb.h>
 #include <assert.h>
-#ifdef HAVE_STDEF_H
+#ifdef HAVE_STDDEF_H
 # include <stddef.h>
 #endif
 
@@ -61,6 +60,8 @@ typedef	struct	SMode	Mode;
 typedef	struct	fdarray	FdAry;
 typedef	struct	CPing	aCPing;
 
+#include "service.h"
+
 #ifndef VMSP
 #include "class.h"
 #include "dbuf.h"	/* THIS REALLY SHOULDN'T BE HERE!!! --msa */
@@ -77,7 +78,7 @@ typedef	struct	CPing	aCPing;
 #define	USERLEN		10
 #define	REALLEN	 	50
 #define	TOPICLEN	80
-#define	CHANNELLEN	200
+#define	CHANNELLEN	50
 #define	PASSWDLEN 	20
 #define	KEYLEN		23
 #define	BUFSIZE		512		/* WARNING: *DONT* CHANGE THIS!!!! */
@@ -175,7 +176,7 @@ typedef	struct	CPing	aCPing;
 #define	FLAGS_DOID	 0x2000	/* I-lines say must use ident return [unused]*/
 #define	FLAGS_NONL	 0x4000 /* No \n in buffer */
 #define	FLAGS_HELD	 0x8000	/* connection held and reconnect try */
-#define	FLAGS_CBURST	0x10000	/* st to mark connection being sent c. burt */
+#define	FLAGS_CBURST	0x10000	/* set to mark connection burst being sent */
 #define FLAGS_RILINE    0x20000 /* Restricted i-line */
 #define FLAGS_QUIT      0x40000 /* QUIT :comment shows it's not a split */
 #define FLAGS_SPLIT     0x80000 /* client QUITting because of a netsplit */
@@ -436,9 +437,9 @@ struct Client	{
 	aClient	*acpt;		/* listening client which we accepted from */
 	Link	*confs;		/* Configuration record associated */
 	int	authfd;		/* fd for rfc931 authentication */
-	int	priority;	/* priority for slection as active */
+	int	priority;	/* priority for selection as active */
 	u_short	ract;		/* no fear about this. */
-	u_short	port;	/* and the remote port# too :-) */
+	u_short	port;		/* and the remote port# too :-) */
 	struct	in_addr	ip;	/* keep real ip# too */
 	struct	hostent	*hostp;
 #ifdef	pyr
@@ -516,7 +517,6 @@ struct	Message	{
 		/* bit 0 set means that this command is allowed to be used
 		 * only on the average of once per 2 seconds -SRB */
 	u_long	bytes;
-	int	penalty;	/* extra penalty for clients executing it */
 };
 
 #define	MSG_LAG		0x0001
@@ -732,8 +732,11 @@ typedef	struct	{
 #define EXITC_FLOOD	'F'	/* client flooding */
 #define EXITC_KLINE	'k'	/* K-lined */
 #define EXITC_KILL	'K'	/* KILLed */
+#define EXITC_MBUF	'M'	/* mem alloc error */
 #define EXITC_PING	'P'	/* ping timeout */
+#define EXITC_SENDQ	'Q'	/* send queue exceeded */
 #define EXITC_RLINE	'r'	/* R-lined */
+#define EXITC_REF	'R'	/* Refused */
 
 /* misc variable externs */
 

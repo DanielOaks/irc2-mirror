@@ -28,7 +28,7 @@ Computing Center and Jarkko Oikarinen";
 
 
 static	int	calls = 0;
-#define	MAX_CALLS	200
+#define	MAX_CALLS	512
 /*
 **  Compare if a given string (name) matches the given
 **  mask (which can contain wild cards: '*' - match any
@@ -122,8 +122,6 @@ char	*ma, *na;
 int	matches(ma, na)
 char	*ma,*na;
 {
-	int	r;
-
 	calls = 0;
 	return _match(ma, na);
 }

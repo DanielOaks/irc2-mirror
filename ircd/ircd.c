@@ -42,6 +42,7 @@ aClient *client = &me;		/* Pointer to beginning of Client list */
 void	server_reboot();
 void	restart __P((char *));
 static	void	open_debugfile(), setup_signals();
+time_t	io_loop __P((time_t));
 
 istat_t	istat;
 char	**myargv;
@@ -515,9 +516,14 @@ aClient	*mp;
 static	int	bad_command()
 {
   (void)printf(
-	 "Usage: ircd %s[-h servername] [-p portnumber] [-x loglevel] [-t]\n",
+	 "Usage: ircd [-a] [-c] [-d path]%s [-h servername] [-q] [-o] [-i] [-T tunefile] [-v]%s\n",
 #ifdef CMDLINE_CONFIG
-	 "[-f config] "
+	 " [-f config]",
+#else
+	 "",
+#endif
+#ifdef DEBUGMODE
+	 " [-x loglevel] [-t]"
 #else
 	 ""
 #endif
@@ -616,6 +622,13 @@ char	*argv[];
 			strncpyzt(me.name, p, sizeof(me.name));
 			break;
 		    case 'i':
+			/* otherwise people wonder why it doesn't work,
+			   and since they don't RTFS (see below) -krys */
+			(void)fprintf(stderr,
+				      "%s: inetd support is not functional\n",
+				      myargv[0]);
+			exit(0);
+
 			bootopt |= BOOT_INETD|BOOT_AUTODIE;
 		        break;
 		    case 't':
@@ -722,7 +735,7 @@ char	*argv[];
 	setup_me(&me);
 	check_class();
 	ircd_writetune(tunefile);
-
+/* This cannot be right anymore..
 	if (bootopt & BOOT_INETD)
 	    {
 		aClient	*tmp;
@@ -738,6 +751,7 @@ char	*argv[];
 		(void)inetport(tmp, "*", 0);
 		local[0] = tmp;
 	    }
+*/
 	if (bootopt & BOOT_OPER)
 	    {
 		aClient *tmp = add_connection(&me, 0);
@@ -760,7 +774,7 @@ char	*argv[];
 }
 
 
-io_loop(delay)
+time_t	io_loop(delay)
 time_t	delay;
 {
 	static	time_t	nextc = 0, nextactive = 0, lastl = 0;
@@ -819,7 +833,7 @@ time_t	delay;
 	if (timeofday > nextc)
 	    {
 		(void)read_message(delay, &fdall);
-		nextc = timeofday + HUB + 1;
+		nextc = timeofday + HUB;
 	    }
 	else
 	    {
@@ -859,7 +873,8 @@ time_t	delay;
 	if (dorestart)
 		restart("Caught SIGINT");
 	if (dorehash)
-	    {
+	    {	/* Only on signal, not on oper /rehash */
+		ircd_writetune(tunefile);
 		(void)rehash(&me, &me, 1);
 		dorehash = 0;
 	    }
@@ -989,20 +1004,30 @@ static	void	setup_signals()
 
 /*
  * Called from bigger_hash_table(), s_die(), server_reboot(),
- * main(after initializations), grow_history().
+ * main(after initializations), grow_history(), rehash(io_loop) signal.
  */
 void ircd_writetune(filename)
 char *filename;
 {
-	FILE	*fp;
+	int fd;
+	char buf[100];
 
-	if ((fp = fopen(filename, "w")))
+	if ((fd = open(filename, O_CREAT|O_WRONLY, 0600)) >= 0)
 	    {
-		(void) fprintf(fp, "%d\n%d\n%d\n%d\n%d\n%d\n", ww_size,
+		(void)sprintf(buf, "%d\n%d\n%d\n%d\n%d\n%d\n", ww_size,
 			       lk_size, _HASHSIZE, _CHANNELHASHSIZE,
 			       _SERVERSIZE, poolsize);
-		fclose(fp);
+		if (write(fd, buf, strlen(buf)) == -1)
+			sendto_flag(SCH_ERROR,
+				    "Failed (%d) to write tune file: %s.",
+				    errno, filename);
+		else
+			sendto_flag(SCH_NOTICE, "Updated %s.", filename);
+		close(fd);
 	    }
+	else
+		sendto_flag(SCH_ERROR, "Failed (%d) to open tune file: %s.",
+			    errno, filename);
 }
 
 /*
@@ -1011,20 +1036,19 @@ char *filename;
 void ircd_readtune(filename)
 char *filename;
 {
-	FILE	*fp;
+	int fd;
+	char buf[100];
 
-	(void)alarm(3);
-	fp = fopen(filename, "r");
-	(void)alarm(0);
-	if (fp)
+	if ((fd = open(filename, O_RDONLY)) != -1)
 	    {
-		if (fscanf(fp, "%d\n%d\n%d\n%d\n%d\n%d\n", &ww_size, &lk_size,
-			   &_HASHSIZE, &_CHANNELHASHSIZE, &_SERVERSIZE,
-			   &poolsize) != 6)
+		read(fd, buf, 100);	/* no panic if this fails.. */
+		if (sscanf(buf, "%d\n%d\n%d\n%d\n%d\n%d\n", &ww_size,
+			    &lk_size, &_HASHSIZE, &_CHANNELHASHSIZE,
+			    &_SERVERSIZE, &poolsize) != 6)
 		    {
 			fprintf(stderr, "ircd tune file %s: bad format\n",
 				filename);
-			fclose(fp);
+			close(fd);
 			exit(1);
 		    }
 		/*
@@ -1034,6 +1058,6 @@ char *filename;
 		*/
 		if (lk_size < ww_size)
 			lk_size = ww_size;
-		fclose(fp);
+		close(fd);
 	    }
 }
