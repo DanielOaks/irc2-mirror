@@ -44,10 +44,10 @@ CFLAGS=-g -I${INCLUDE}
 IRCDLIBS=
 
 OBJS=channel.o date.o ircd.o list.o s_bsd.o s_conf.o s_msg.o s_numeric.o\
-     whowas.o s_debug.o note.o class.o
+     whowas.o s_debug.o note.o class.o hash.o
 
 SRC=channel.c date.c ircd.c list.c s_bsd.c s_conf.c s_msg.c s_numeric.c\
-     whowas.c s_debug.c note.c class.c
+     whowas.c s_debug.c note.c class.c hash.c
 
 COMMONOBJS=../common/bsd.o ../common/dbuf.o \
            ../common/packet.o ../common/send.o\
@@ -65,7 +65,7 @@ ircd: $(OBJS) $(COMMONOBJS) ../include/patchlevel.h
 	$(CC) $(OBJS) $(COMMONOBJS) version.o -o ircd $(IRCDLIBS)
 	chmod $(IRCDMODE) ircd
 
-../common/parse.o:
+../common/parse.o: ../include/msg.h
 	(cd ../common; ${MAKE} build);
 
 ../common/bsd.o:
@@ -118,3 +118,4 @@ whowas.o: ../include/numeric.h
 whowas.o: ../include/whowas.h
 s_debug.o: ../include/struct.h
 class.o: ../include/struct.h ../include/class.h
+hash.o: ../include/struct.h ../include/sys.h ../include/hash.h

@@ -117,11 +117,11 @@ long currenttime;
   Reg2 aClient *cptr;
   aClient *acptr;
   aConfItem *bconf, **pconf;
-  int connecting, confrq;
+  int connecting = 0, confrq = 0;
   long next = 0;
   aClass *cltmp;
   aConfItem *con_conf;
-  int con_class;
+  int con_class = 0;
   
   connecting = FALSE;
   debug(DEBUG_DEBUG,"Connection check at   : %s", myctime(currenttime));
@@ -165,18 +165,15 @@ long currenttime;
 	next = aconf->hold;
     }
   if (connecting) {
-    if (connect_server(con_conf) == 0) {
-      if (con_conf->next) {  /* are we already last? */
-	for (pconf = &conf; aconf = *pconf; pconf = &(aconf->next))
-	  if (aconf == con_conf) /* put the current one at the end */
-	    *pconf = aconf->next; /* makes sure we try all connections */
-	(*pconf = con_conf)->next = 0;
-      }
+    if (con_conf->next) {  /* are we already last? */
+      for (pconf = &conf; aconf = *pconf; pconf = &(aconf->next))
+	if (aconf == con_conf) /* put the current one at the end */
+	  *pconf = aconf->next; /* makes sure we try all connections */
+      (*pconf = con_conf)->next = 0;
+    }
+    if (connect_server(con_conf) == 0)
       sendto_ops("Connection to %s[%s] activated.",
 		 con_conf->name, con_conf->host);
-    }
-    if (next == 0)
-      next = currenttime; /* this for when we do routing */
   }
   debug(DEBUG_DEBUG,"Next connection check : %s", myctime(next));
   return (next);
@@ -355,13 +352,13 @@ char *argv[];
 		switch (flag)
 		    {
 		    case 'd': /* Per user local daemon... */
-                        setuid(getuid());
+                        seteuid(getuid());
 			autodie = 1;
                         debugtty = -1;  /* mark fd 0 to be oper connection */
 		        break;
 #ifdef CMDLINE_CONFIG
 		    case 'f':
-                        setuid(getuid());
+                        seteuid(getuid());
 			configfile = p;
 			break;
 #endif
@@ -376,12 +373,12 @@ char *argv[];
 				portnum = length;
 			break;
 		    case 'x':
-                        setuid(getuid());
+                        seteuid(getuid());
 			debuglevel = atoi(p);
 			debugmode = *p ? p : "0";
 			break;
 		    case 't':
-                        setuid(getuid());
+                        seteuid(getuid());
 			debugtty = 1;
 			break;
 		    case 'i':
@@ -396,8 +393,11 @@ char *argv[];
 	setuid(geteuid());
 	if (getuid() == 0)
 	    {
-		setgid(-2);
-		setuid(-2);
+		int nobody = -2;
+		fprintf(stderr,"WARNING: running ircd with uid = 0\n");
+		fprintf(stderr,"         changing to gid/uid %d.\n",nobody);
+		setgid(nobody);
+		setuid(nobody);
 	    } 
 
 	if (debuglevel == -1)  /* didn't set debuglevel */
@@ -407,6 +407,8 @@ char *argv[];
 	if (argc > 0)
 	  BadCommand(); /* Should never return from here... */
 
+	clearClientHashTable();
+	clearChannelHashTable();
 	initclass();
 	if (initconf() == -1)
 	  {
@@ -432,6 +434,7 @@ char *argv[];
 	me.fd = (debugtty == -2) ? 0 : open_port(portnum);
 	me.status = STAT_ME;
 	me.lasttime = me.since = me.firsttime = time(NULL);
+	addToClientHashTable(me.name, &me);
 
 #ifdef MSG_NOTE
 	init_messages();
@@ -460,8 +463,12 @@ char *argv[];
 		/*
 		** take the smaller of the two 'timed' event times as
 		** the time of next event (stops us being late :) - avalon
+		** WARNING - nextconnect can return 0!
 		*/
-		delay = MIN(nextping, nextconnect) - now;
+		if (nextconnect)
+			delay = MIN(nextping, nextconnect) - now;
+		else
+			delay = nextping - now;
 		/*
 		** Adjust delay to something reasonable [ad hoc values]
 		** (one might think something more clever here... --msa)

@@ -49,7 +49,7 @@
  * If you get loader errors about unreferenced function calls, you must
  * define the following accordingly:
  */
-#if NEXT
+#if NEXT || HPUX
 #define NEED_STRERROR   0
 #else
 #define NEED_STRERROR	1	/* Your libc.a is no ANSI-library and has */
@@ -87,10 +87,13 @@
 #define HAVECURSES	1	/* If you have curses, and want to use it.  */
 #define HAVETERMCAP	0	/* If you have termcap, and want to use it. */
 
-  /* Define this if you want to use MSGBASE system                */
-  /* MSGBASE is a system which allows you to leave messages       */
-  /* for users and make them be sent to recipient when he/she     */
-  /* signs on IRC. This does not work on all systems !            */
+  /* Define this if you want to use NOTE system.                         */
+  /* The NOTE system let you send one line messages to irc users which   */
+  /* they will get if and when they next sign on to irc, change nick or  */
+  /* channel. If they are on irc already, they'll get the note message   */
+  /* immediately. NOTE has built in a lot of other features too as FIND, */
+  /* SPY with LOG and WAITFOR. See /HELP NOTE in IRCIIclient.            */
+
 /* #define MSG_NOTE     "NOTE" /* */
 
 /*
@@ -98,16 +101,16 @@
  * these are only the recommened names and paths. Change as needed.
  */
 
-#define SPATH "/usr/local/bin/ircd" /* Where the server lives.  */
-#define CPATH "/usr/local/lib/irc/ircd.conf"	 /* IRC Configuration file.  */
-#define MPATH "/usr/local/lib/irc/ircd.motd"     /* Message Of The Day file. */
-#define LPATH "/usr/local/lib/irc/ircd.log"      /* Where the Logfile lives. */
+#define SPATH "/usr/local/src/ircd/bin/ircd" /* Where the server lives.  */
+#define CPATH "/usr/local/src/ircd/ircd.conf" /* IRC Configuration file.  */
+#define MPATH "/usr/local/src/ircd/ircd.motd" /* Message Of The Day file. */
+#define LPATH "/tmp/ircd7.log"   /* Where the Logfile lives. */
 #ifdef MSG_NOTE
-/* Where MSGBASE saves its messages from time to time... */
-#define NOTE_SAVE_FILENAME "/usr/local/lib/irc/.ircdmail"
+/* Where NOTE system saves its requests from time to time... */
+#define NOTE_SAVE_FILENAME "/usr/local/lib/irc/.ircdnote"
 #endif
 
-#define UPHOST "tolsun.oulu.fi"              /* Default UPHOST for irc */
+#define UPHOST "131.170.8.11"              /* Default UPHOST for irc */
                                              /* standard client        */
 
 /* ENABLE_SUMMON
@@ -118,7 +121,7 @@
  * this.
  */
 
-/* #define ENABLE_SUMMON /* local summon */
+#define ENABLE_SUMMON /* local summon */
  
 /* MAXIMUM LINKS
  *
@@ -148,7 +151,7 @@
  *
  */
 
-#define MAXIMUM_LINKS 10   /* Maximum links accepted */
+#define MAXIMUM_LINKS 99   /* Maximum links accepted */
 
 #define WALLOPS_REMOTES    /* Notify all opers of remote SQUITS/CONNECTS */
 
@@ -179,7 +182,12 @@
 #define R_LINES_OFTEN  /* */
 #endif
 
-#define CMDLINE_CONFIG /* allow conf-file to be specified on command line */
+/*
+ * NOTE: defining CMDLINE_CONFIG and installing ircd SUID or SGID is a MAJOR
+ *       security problem - they can use the "-f" option to read any files
+ *       that the 'new' access lets them.
+ */
+/* #define CMDLINE_CONFIG /* allow conf-file to be specified on command line */
 
 /*
  * Define this filename to maintain a list of persons who log
@@ -187,7 +195,7 @@
  * Logging will be disable also if you do not define this.
  */
 
-/* #define FNAME_USERLOG "/usr/local/lib/irc/userlog" /* */
+#define FNAME_USERLOG "/usr/local/src/ircd/userlog" /* */
 
 #define WALL /* Define this if you want walls */
 
@@ -201,17 +209,40 @@
  * Port where ircd resides. NOTE: This *MUST* be greater than 1024 if you
  * plan to run ircd under any other uid than root.
  */
-
 #define PORTNUM 6667		/* Recommended values: 6667 or 6666 */
 
+/*
+ * Maximum number of network connections your server will allow.  This should
+ * never exceed max. number of open file descrpitors and wont increase this.
+ * Should remain LOW as possible. Most sites will usually have under 30 or so
+ * connections. A busy hub or server may need this to be as high as 50 or 60.
+ * Making it over 100 decreases any performance boost gained from it being low.
+ * if you have a lot of server connections, it may be worth splitting the load
+ * over 2 or more servers.
+ * 1 server = 1 connection, 1 user = 1 connection.
+ */
+#define MAXCONNECTIONS	50
+
+/*
+ * this defines the length of the nickname history.  each time a user changes
+ * nickname or signs off, their old nickname is added to the top of the list.
+ * The following sizes are recommended:
+ * 8MB or less  core memory : 200
+ * 8MB-16MB     core memory : 200-300
+ * 16MB-32MB    core memory : 300-500
+ * 32MB or more core memory : 500+
+ * (100 nicks/users ~ 75K)
+ * NOTE: this is directly related to the amount of memory ircd will use whilst
+ *	 resident and running - it hardly ever gets swapped to disk! You can
+ *	 ignore these recommendations- they only are meant to serve as a guide
+ */
+#define NICKNAMEHISTORYLENGTH 300
 
 /*
  * Time interval to wait and if no messages have been received, then check for
  * PINGFREQUENCY and CONNECTFREQUENCY 
  */
-
 #define TIMESEC  60		/* Recommended value: 60 */
-
 
 /*
  * If daemon doesn't receive anything from any of its links within
@@ -219,7 +250,6 @@
  * an active link with a PING message. If no reply is received within
  * (PINGFREQUENCY * 2) seconds, then the connection will be closed.
  */
-
 #define PINGFREQUENCY    120	/* Recommended value: 120 */
 
 
@@ -227,7 +257,6 @@
  * If the connection to to uphost is down, then attempt to reconnect every 
  * CONNECTFREQUENCY  seconds.
  */
-
 #define CONNECTFREQUENCY 600	/* Recommended value: 600 */
 
 /*
@@ -245,20 +274,17 @@
 /*
  * Number of seconds to wait for write to complete if stuck.
  */
-
 #define WRITEWAITDELAY     15	/* Recommended value: 15 */
 
 /*
  * Max time from the nickname change that still causes KILL
  * automaticly to switch for the current nick of that user. (seconds)
  */
-
 #define KILLCHASETIMELIMIT 90   /* Recommended value: 90 */
 
 /*
  * Max amount of internal send buffering when socket is stuck (bytes)
  */
-
 #define MAXSENDQLENGTH 100000    /* Recommended value: 50000 for leaves */
                                  /*                    100000 for backbones */
 
@@ -287,7 +313,6 @@
 #if DEBUGMODE
 # define LOGFILE LPATH
 #else
-# define debug          (void)          /* anybody have a better idea? --SRB */
 # if VMS
 #	define LOGFILE "NLA0:"
 # else
